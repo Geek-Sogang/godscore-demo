@@ -76,10 +76,8 @@ export interface MissionLog {
 export interface DailyMissionStatus {
   userId: string;
   date: string;
-  missions: Array<{
-    definition: MissionDefinition;
-    log: MissionLog | null;
-  }>;
+  /** 미션 완료 여부 맵: { A_1: true, B_2: false, ... } */
+  missions: Partial<Record<import('./features').MissionFeatureId, boolean>>;
   completedCount: number;
   totalCount: number;
   completionRate: number;

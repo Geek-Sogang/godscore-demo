@@ -1,102 +1,107 @@
 /**
  * src/application/stores/godScoreStore.ts
- * 갓생점수 Zustand Store
  *
- * 관리 상태:
- *  - 현재 갓생점수 스냅샷 (breakdown, tier, SHAP)
- *  - 점수 이력 (최근 90일)
- *  - 가중치 (분기 재학습 반영)
+ * [수정] EMA 왜곡 수정
+ *   기존: historicalScore를 매일 totalScore로 덮어써 EMA로 변질
+ *   수정: quarterlyBaseScore — 분기 정산 시점에만 갱신되는 고정 스냅샷
+ *         매일 calculateScore() 호출 시 quarterlyBaseScore는 불변
  *
- * immer 미들웨어로 불변성 관리
+ *   분기 정산 흐름:
+ *     1. Celery Beat 분기 1회 → settleQuarterlyScore() 호출
+ *     2. 현재 totalScore → quarterlyBaseScore로 확정
+ *     3. 이후 매일 계산: S = 0.7×S_daily + 0.3×quarterlyBaseScore (고정)
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { GodScoreSnapshot, CategoryWeights, FeatureWeights, SHAPValue } from '../../../types/godScore';
+import type {
+  GodScoreSnapshot,
+  CategoryWeights,
+  FeatureWeights,
+  SHAPValue,
+} from '../../../types/godScore';
 import {
   INITIAL_CATEGORY_WEIGHTS,
   INITIAL_FEATURE_WEIGHTS,
   GOD_SCORE_TIER_TABLE,
-  getTierByScore,
 } from '../../../types/godScore';
 import { executeCalculateGodScore } from '../../domain/usecases/CalculateGodScore';
 import { generateMockRawScores } from '../../domain/entities/GodScore';
 import type { RawCategoryScores } from '../../domain/entities/GodScore';
 
-// ── State 타입 ──────────────────────────────────────────
 interface GodScoreState {
-  /** 현재 갓생점수 스냅샷 */
   currentSnapshot: GodScoreSnapshot | null;
-  /** 최근 90일 스냅샷 이력 */
   history: GodScoreSnapshot[];
-  /** 현재 적용 중인 카테고리 가중치 */
   categoryWeights: CategoryWeights;
-  /** 현재 적용 중인 피처별 가중치 */
   featureWeights: FeatureWeights;
-  /** 이전 누적 점수 (분기·누적 가중 합산용) */
-  historicalScore: number;
-  /** 로딩 상태 */
+  /**
+   * [수정] 분기 정산 시점에 고정된 베이스 점수
+   * 매일 calculateScore()에서 참조하되 변경하지 않음
+   * settleQuarterlyScore() 에서만 갱신
+   */
+  quarterlyBaseScore: number;
+  /** 현재 분기 정산 날짜 (YYYY-MM-DD) */
+  quarterlySettledAt: string | null;
   isCalculating: boolean;
-  /** 에러 메시지 */
   error: string | null;
 }
 
-// ── Actions 타입 ────────────────────────────────────────
 interface GodScoreActions {
-  /**
-   * 갓생점수 계산 및 상태 갱신
-   * rawScores가 없으면 Mock 데이터로 계산
-   */
   calculateScore: (userId: string, rawScores?: RawCategoryScores) => void;
-  /** 이력에서 특정 날짜 스냅샷 조회 */
+  /**
+   * [신규] 분기 정산 액션
+   * 현재 점수를 quarterlyBaseScore로 확정 — 분기 1회 Celery Beat에서 호출
+   */
+  settleQuarterlyScore: () => void;
   getSnapshotByDate: (date: string) => GodScoreSnapshot | undefined;
-  /** 분기 재학습 결과로 가중치 갱신 (XGBoost 재학습 후 호출) */
-  updateWeights: (newCategoryWeights: CategoryWeights, newFeatureWeights: FeatureWeights) => void;
-  /** SHAP 값 기준 상위 피처 조회 (기여도 내림차순) */
+  updateWeights: (
+    newCategoryWeights: CategoryWeights,
+    newFeatureWeights: FeatureWeights,
+  ) => void;
   getTopSHAPFeatures: (limit?: number) => SHAPValue[];
-  /** 에러 초기화 */
   clearError: () => void;
-  /** Mock 데이터로 초기 상태 시드 (4단계 테스트용) */
   seedMockData: (userId: string) => void;
 }
 
-// ── Store ───────────────────────────────────────────────
 export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
   immer((set, get) => ({
-    // 초기 상태
-    currentSnapshot: null,
-    history: [],
-    categoryWeights: INITIAL_CATEGORY_WEIGHTS,
-    featureWeights: INITIAL_FEATURE_WEIGHTS,
-    historicalScore: 0,
-    isCalculating: false,
-    error: null,
+    currentSnapshot:    null,
+    history:            [],
+    categoryWeights:    INITIAL_CATEGORY_WEIGHTS,
+    featureWeights:     INITIAL_FEATURE_WEIGHTS,
+    quarterlyBaseScore: 0,       // 첫 분기: 0 → undefined 처리로 일일 점수 자체 사용
+    quarterlySettledAt: null,
+    isCalculating:      false,
+    error:              null,
 
-    // ── Actions ─────────────────────────────────────────
     calculateScore: (userId, rawScores) => {
-      set(state => { state.isCalculating = true; state.error = null; });
+      // Race Condition 가드: 이미 계산 중이면 무시
+      if (get().isCalculating) return;
 
+      set(state => { state.isCalculating = true; state.error = null; });
       try {
         const scores = rawScores ?? generateMockRawScores(0.6);
-        const today = new Date().toISOString().slice(0, 10);
+        const today  = new Date().toISOString().slice(0, 10);
+        const base   = get().quarterlyBaseScore > 0
+          ? get().quarterlyBaseScore
+          : undefined; // 첫 분기: base 없음 → 일일 점수 그대로 사용
+
         const { snapshot } = executeCalculateGodScore({
           userId,
           date: today,
           rawScores: scores,
-          historicalScore: get().historicalScore || undefined,
+          quarterlyBaseScore: base ?? 0, // [수정] historicalScore → quarterlyBaseScore, undefined 방지
           categoryWeights: get().categoryWeights,
-          featureWeights: get().featureWeights,
+          featureWeights:  get().featureWeights,
         });
 
         set(state => {
           state.currentSnapshot = snapshot;
-          state.historicalScore = snapshot.breakdown.totalScore;
-          // 이력: 같은 날짜 덮어쓰기, 없으면 추가
+          // [수정] quarterlyBaseScore 갱신 없음 — 분기 내 불변
           const idx = state.history.findIndex(h => h.date === today);
           if (idx >= 0) {
             state.history[idx] = snapshot;
           } else {
             state.history.push(snapshot);
-            // 90일 초과분 제거
             if (state.history.length > 90) {
               state.history.splice(0, state.history.length - 90);
             }
@@ -105,22 +110,29 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
         });
       } catch (err) {
         set(state => {
-          state.error = err instanceof Error ? err.message : '점수 계산 오류';
+          state.error       = err instanceof Error ? err.message : '점수 계산 오류';
           state.isCalculating = false;
         });
       }
     },
 
-    getSnapshotByDate: (date) => {
-      return get().history.find(h => h.date === date);
-    },
-
-    updateWeights: (newCategoryWeights, newFeatureWeights) => {
+    settleQuarterlyScore: () => {
+      const snap = get().currentSnapshot;
+      if (!snap) return;
       set(state => {
-        state.categoryWeights = newCategoryWeights;
-        state.featureWeights = newFeatureWeights;
+        state.quarterlyBaseScore = snap.breakdown.totalScore;
+        state.quarterlySettledAt = new Date().toISOString().slice(0, 10);
       });
     },
+
+    getSnapshotByDate: date =>
+      get().history.find(h => h.date === date),
+
+    updateWeights: (newCat, newFeat) =>
+      set(state => {
+        state.categoryWeights = newCat;
+        state.featureWeights  = newFeat;
+      }),
 
     getTopSHAPFeatures: (limit = 5) => {
       const snap = get().currentSnapshot;
@@ -133,40 +145,48 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
     clearError: () => set(state => { state.error = null; }),
 
     seedMockData: (userId) => {
-      // 최근 7일 Mock 이력 생성
-      const weights = get().categoryWeights;
-      const featWeights = get().featureWeights;
+      const catW  = get().categoryWeights;
+      const featW = get().featureWeights;
       const history: GodScoreSnapshot[] = [];
+      // 최초 분기 베이스: 7일 전 점수로 설정 (Mock)
+      const baseSnap = executeCalculateGodScore({
+        userId, date: '2026-01-01',
+        rawScores: generateMockRawScores(0.45),
+        categoryWeights: catW, featureWeights: featW,
+      });
+      const quarterlyBase = baseSnap.snapshot.breakdown.totalScore;
+
       for (let i = 6; i >= 0; i--) {
         const date = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-        const seed = 0.45 + i * 0.03; // 점진적 상승 패턴
+        const seed = 0.45 + i * 0.03;
         const { snapshot } = executeCalculateGodScore({
-          userId,
-          date,
+          userId, date,
           rawScores: generateMockRawScores(seed),
-          categoryWeights: weights,
-          featureWeights: featWeights,
+          quarterlyBaseScore: quarterlyBase,   // [수정] 동일한 분기 베이스 참조
+          categoryWeights: catW, featureWeights: featW,
         });
         history.push(snapshot);
       }
       set(state => {
-        state.history = history;
-        state.currentSnapshot = history[history.length - 1];
-        state.historicalScore = history[history.length - 1].breakdown.totalScore;
+        state.history            = history;
+        state.currentSnapshot    = history[history.length - 1];
+        state.quarterlyBaseScore = quarterlyBase;
+        state.quarterlySettledAt = '2026-01-01';
       });
     },
   })),
 );
 
-// ── Selector 헬퍼 (리렌더 최적화용) ──────────────────────
-export const selectCurrentScore = (s: GodScoreState) =>
+// ── Selectors ────────────────────────────────────────────────────────
+export const selectCurrentScore     = (s: GodScoreState) =>
   s.currentSnapshot?.breakdown.totalScore ?? 0;
-
-export const selectCurrentTier = (s: GodScoreState) =>
+export const selectCurrentTier      = (s: GodScoreState) =>
   s.currentSnapshot?.tier ?? GOD_SCORE_TIER_TABLE[0];
-
-export const selectBreakdown = (s: GodScoreState) =>
+export const selectBreakdown        = (s: GodScoreState) =>
   s.currentSnapshot?.breakdown ?? null;
-
-export const selectSHAPValues = (s: GodScoreState) =>
+export const selectSHAPValues       = (s: GodScoreState) =>
   s.currentSnapshot?.shapValues ?? [];
+export const selectQuarterlyBase    = (s: GodScoreState) =>
+  s.quarterlyBaseScore;
+export const selectQuarterlySettled = (s: GodScoreState) =>
+  s.quarterlySettledAt;

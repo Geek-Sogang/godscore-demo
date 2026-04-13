@@ -22,7 +22,7 @@ import {
 export interface MLEngineInput {
   userId: string;
   rawScores?: RawCategoryScores;
-  historicalScore?: number;
+  quarterlyBaseScore?: number;
 }
 
 export interface MLEngineOutput {
@@ -66,7 +66,7 @@ export function useMLEngine(
         userId: input.userId,
         date: today,
         rawScores,
-        historicalScore: input.historicalScore,
+        quarterlyBaseScore: input.quarterlyBaseScore ?? 0,
         categoryWeights,
         featureWeights: featureWeightsRef.current,
       });

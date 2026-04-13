@@ -181,3 +181,29 @@ S = wA·fA + wB·fB + wC·fC + wD·fD
 - ❌ 순환 참조 (Presentation → Infrastructure 직접 접근)
 - ❌ Store 외부에서 직접 상태 뮤테이션
 - ❌ 컴포넌트 내 비즈니스 로직 작성 (Hook/Store 위임 원칙)
+
+## Step 4 완료 상세 — 완성형 MVP UI (2026-04-14)
+
+### NativeWind 설정
+- `tailwind.config.js` — 하나 브랜드 컬러 팔레트 (hana-green, hana-gold, hana-cream 등)
+- `babel.config.js` — nativewind/babel 프리셋
+- `metro.config.js` — withNativeWind() 래핑
+- `global.css` — @tailwind 지시어
+- `nativewind-env.d.ts` — TypeScript 타입 선언
+
+### 구현된 5개 화면
+| 화면 | 파일 | 줄수 | 주요 기능 |
+|------|------|------|-----------|
+| 메인보드 | HomeScreen.tsx | 324 | 갓생점수·스트릭·코인 헤더, 가상작업실, Today's Quest 카드 |
+| 미션센터 | MissionCenterScreen.tsx | 400 | 4탭(A/B/C/D), 진행률바, 미션 완료→txHash 표시 |
+| 업로드 | MissionUploadScreen.tsx | 438 | 파일형식 선택, AI 단계별 진행 애니메이션, 블록체인 결과 |
+| 스토어 | ItemStoreScreen.tsx | 304 | 작업실 프리뷰, 가로스크롤 아이템 카드, 코인 구매 |
+| 금융리포트 | FinanceReportScreen.tsx | 395 | 금리비교 애니메이션, SHAP Top5, 성장타임라인, CTA버튼 |
+
+### 네비게이션
+- Bottom Tab 5탭: 홈🏠 / 미션⚡ / 스토어🛒(NEW뱃지) / 리포트📊 / 내정보👤
+- 홈 스택: HomeDashboard → MissionCenter → MissionUpload 딥링크
+
+### 설치된 패키지
+- `nativewind@^4.1.6` + `tailwindcss@^3.4.0`
+- `@react-navigation/bottom-tabs@^6.6.1`

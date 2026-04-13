@@ -153,14 +153,28 @@ export interface FeatureB3_IncomeStability {
   timestamp: string;
 }
 
+/**
+ * 지원 긱 플랫폼 식별자
+ * 기획서 p.27 기준 주요 국내외 플랫폼 열거
+ */
+export type SupportedGigPlatform =
+  | 'upwork'    // 해외 프리랜서 플랫폼
+  | 'kmong'     // 크몽 (국내 1위)
+  | 'soomgo'    // 숨고
+  | 'freemoa'   // 프리모아
+  | 'taling'    // 탈잉
+  | 'class101'  // 클래스101
+  | 'fiverr'    // Fiverr (해외)
+  | 'etc';      // 기타 플랫폼
+
 /** B4. 업무 완료 인증 */
 export interface FeatureB4_WorkCompletion {
   /** 이번 달 완료 업무 건수 */
   completedJobsThisMonth: number;
   /** 최근 90일 완료 업무 건수 */
   completedJobs90d: number;
-  /** 플랫폼 별 완료 업무 (e.g. { upwork: 3, kmong: 2 }) */
-  platformBreakdown: Record<string, number>;
+  /** 플랫폼 별 완료 업무 (e.g. { kmong: 3, soomgo: 2 }) */
+  platformBreakdown: Partial<Record<SupportedGigPlatform, number>>;
   /** 업무 완료 인증 방식 */
   verificationMethod: 'platform_api' | 'file_upload' | 'manual';
   /** 플랫폼 평점 평균 (1~5) */

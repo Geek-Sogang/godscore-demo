@@ -4,7 +4,6 @@
  * 기획서 30p 알고리즘 기반
  */
 
-import type { FeatureCategoryId } from './features';
 
 /** 갓생점수 등급 */
 export type GodScoreTier = 'SPROUT' | 'DILIGENT' | 'GODLIFE' | 'LEGEND';

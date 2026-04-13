@@ -19,10 +19,8 @@ import React from 'react';
 import { View, Text, Button, ScrollView, ActivityIndicator } from 'react-native';
 import { useGodScore } from '../../application/hooks/useGodScore';
 import { useMissionStore } from '../../application/stores/missionStore';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../navigation/AppNavigator';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'HomeDashboard'>;
+type Props = { navigation: any; route: any };
 
 // Mock userId — 실서비스: Auth 컨텍스트에서 주입
 const MOCK_USER_ID = 'user_mock_001';
@@ -158,11 +156,11 @@ export default function HomeDashboard({ navigation }: Props) {
         />
         <Button
           title="→ 미션 센터"
-          onPress={() => navigation.navigate('MissionCenter')}
+          onPress={() => (navigation as any).navigate('MissionCenter')}
         />
         <Button
           title="→ 신용점수 상세"
-          onPress={() => navigation.navigate('CreditScoreDetail')}
+          onPress={() => (navigation as any).navigate('CreditScoreDetail')}
         />
       </View>
     </ScrollView>

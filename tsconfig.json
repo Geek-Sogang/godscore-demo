@@ -9,13 +9,30 @@
     "exactOptionalPropertyTypes": true,
     "baseUrl": ".",
     "paths": {
-      "@domain/*": ["src/domain/*"],
-      "@infra/*": ["src/infrastructure/*"],
-      "@app/*": ["src/application/*"],
-      "@presentation/*": ["src/presentation/*"],
-      "@types-local/*": ["types/*"]
+      "@domain/*": [
+        "src/domain/*"
+      ],
+      "@infra/*": [
+        "src/infrastructure/*"
+      ],
+      "@app/*": [
+        "src/application/*"
+      ],
+      "@presentation/*": [
+        "src/presentation/*"
+      ],
+      "@types-local/*": [
+        "types/*"
+      ]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.d.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.d.ts",
+    "nativewind-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

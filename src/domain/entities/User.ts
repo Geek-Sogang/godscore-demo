@@ -2,7 +2,6 @@
  * src/domain/entities/User.ts
  * 사용자 엔티티 — 도메인 핵심 객체
  */
-import type { GodScoreTier, GodScoreTierInfo } from '../../../types/godScore';
 
 export interface UserProfile {
   id: string;
@@ -19,9 +18,18 @@ export interface UserProfile {
   cbScore: number | null;
 }
 
+/** 갓생 티어 정보 */
+export interface GodScoreTierInfo {
+  tier: string;
+  label: string;
+  minScore: number;
+  maxScore: number;
+  color: string;
+}
+
 export interface UserState {
   profile: UserProfile;
-  currentTier: GodScoreTierInfo;
+  currentTier?: GodScoreTierInfo;
   totalPoints: number;
   currentStreak: number;
 }

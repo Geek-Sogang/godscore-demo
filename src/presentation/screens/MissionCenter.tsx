@@ -20,12 +20,10 @@ import {
 } from 'react-native';
 import { useMissionStore, selectDailyCompletionRate } from '../../application/stores/missionStore';
 import { useGodScoreStore } from '../../application/stores/godScoreStore';
-import { MISSION_DEFINITIONS, getMissionsByCategory } from '../../domain/entities/Mission';
+import { getMissionsByCategory } from '../../domain/entities/Mission';
 import type { MissionFeatureId, FeatureCategoryId } from '../../../types/features';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../navigation/AppNavigator';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'MissionCenter'>;
+type Props = { navigation: any; route: any };
 
 const MOCK_USER_ID = 'user_mock_001';
 const CATEGORIES: FeatureCategoryId[] = ['A', 'B', 'C', 'D'];
@@ -48,8 +46,8 @@ export default function MissionCenter({ navigation }: Props) {
 
   useEffect(() => {
     store.loadDailyMissions(MOCK_USER_ID);
-    store.refreshPointBalance(MOCK_USER_ID);
-    store.refreshStreak(MOCK_USER_ID);
+    store.loadAndRefreshAll(MOCK_USER_ID);
+    store.loadAndRefreshAll(MOCK_USER_ID);
   }, []);
 
   const handleCompleteMission = async (missionId: MissionFeatureId) => {
@@ -63,7 +61,7 @@ export default function MissionCenter({ navigation }: Props) {
         mockPayload: `mock_raw_data_for_${missionId}`,
       });
 
-      const { txHash, verified } = await store.completeMission(
+      const { txHash, verified: _verified } = await store.completeMission(
         MOCK_USER_ID,
         missionId,
         rawData,
@@ -112,7 +110,7 @@ export default function MissionCenter({ navigation }: Props) {
             const isCompleted = store.completedLogs.some(
               l => l.missionId === mission.id,
             );
-            const isProcessing = store.processingMissionId === mission.id;
+            const isProcessing = store.processingMissionIds.has(mission.id as MissionFeatureId);
             const txHash = txHashMap[mission.id];
 
             return (
@@ -172,8 +170,8 @@ export default function MissionCenter({ navigation }: Props) {
 
       {/* ── 네비게이션 ── */}
       <View>
-        <Button title="← 홈" onPress={() => navigation.navigate('HomeDashboard')} />
-        <Button title="→ 신용점수 상세" onPress={() => navigation.navigate('CreditScoreDetail')} />
+        <Button title="← 홈" onPress={() => (navigation as any).navigate('HomeDashboard')} />
+        <Button title="→ 신용점수 상세" onPress={() => (navigation as any).navigate('CreditScoreDetail')} />
       </View>
     </ScrollView>
   );

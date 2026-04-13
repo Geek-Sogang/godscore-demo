@@ -63,8 +63,8 @@ export function useGodScore(userId: string): UseGodScoreReturn {
     // ML 엔진 실행 (최신 Store 가중치 반영)
     runEngine({
       userId,
-      rawScores,
-      historicalScore: store.historicalScore,
+      ...(rawScores !== undefined ? { rawScores } : {}),
+      quarterlyBaseScore: store.quarterlyBaseScore,
     });
     // Store 점수도 동기 갱신
     store.calculateScore(userId, rawScores);

@@ -25,10 +25,8 @@ import {
   selectSHAPValues,
 } from '../../application/stores/godScoreStore';
 import { useMissionStore } from '../../application/stores/missionStore';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '../navigation/AppNavigator';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'CreditScoreDetail'>;
+type Props = { navigation: any; route: any };
 
 // 갓생점수 → 금리 우대폭 매핑 (기획서 18p: 최대 -1%p)
 function getInterestDiscount(score: number): string {
@@ -182,8 +180,8 @@ export default function CreditScoreDetail({ navigation }: Props) {
 
       {/* ── 네비게이션 ── */}
       <View>
-        <Button title="← 홈" onPress={() => navigation.navigate('HomeDashboard')} />
-        <Button title="← 미션 센터" onPress={() => navigation.navigate('MissionCenter')} />
+        <Button title="← 홈" onPress={() => (navigation as any).navigate('HomeDashboard')} />
+        <Button title="← 미션 센터" onPress={() => (navigation as any).navigate('MissionCenter')} />
       </View>
     </ScrollView>
   );

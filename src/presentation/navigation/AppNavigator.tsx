@@ -1,47 +1,178 @@
+// Figma 매칭: [전체 네비게이션 구조]
 /**
- * src/presentation/navigation/AppNavigator.tsx
- * 앱 네비게이션 스택
- * Figma 화면 전환 구조 대응
+ * AppNavigator.tsx
+ * Bottom Tab 네비게이터 + Stack 네비게이터 통합
+ *
+ * 탭 구성: 홈 | 미션 | 스토어 | 리포트 | 내 정보
  */
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import HomeDashboard from '../screens/HomeDashboard';
-import MissionCenter from '../screens/MissionCenter';
-import CreditScoreDetail from '../screens/CreditScoreDetail';
 
-// ── 전체 화면 파라미터 타입 (타입 안전 네비게이션) ──────────
-export type RootStackParamList = {
-  HomeDashboard: undefined;
+import React from 'react';
+import { View, Text } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+
+// ── 화면 Import ───────────────────────────────────────────────────
+import HomeScreen            from '../screens/HomeScreen';
+import MissionCenterScreen   from '../screens/MissionCenterScreen';
+import MissionUploadScreen   from '../screens/MissionUploadScreen';
+import ItemStoreScreen       from '../screens/ItemStoreScreen';
+import FinanceReportScreen   from '../screens/FinanceReportScreen';
+
+// ── 타입 정의 ─────────────────────────────────────────────────────
+export type RootTabParamList = {
+  Home:          undefined;
   MissionCenter: undefined;
-  CreditScoreDetail: undefined;
+  ItemStore:     undefined;
+  FinanceReport: undefined;
+  MyPage:        undefined;
 };
 
-const Stack = createNativeStackNavigator<RootStackParamList>();
+export type HomeStackParamList = {
+  HomeDashboard: undefined;
+  MissionCenter: undefined;
+  MissionUpload: { missionId: string };
+};
 
+const Tab   = createBottomTabNavigator<RootTabParamList>();
+const Stack = createNativeStackNavigator<HomeStackParamList>();
+
+// ── 탭 아이콘 ──────────────────────────────────────────────────────
+function TabIcon({
+  emoji,
+  label,
+  focused,
+}: {
+  emoji: string;
+  label: string;
+  focused: boolean;
+  color?: string;
+}) {
+  return (
+    <View className="items-center pt-1">
+      <Text style={{ fontSize: focused ? 24 : 20 }}>{emoji}</Text>
+      <Text
+        style={{
+          fontSize: 10,
+          fontWeight: focused ? '700' : '400',
+          color: focused ? '#00A651' : '#9CA3AF',
+          marginTop: 2,
+        }}
+      >
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+// ── MyPage 플레이스홀더 ──────────────────────────────────────────
+function MyPageScreen() {
+  return (
+    <View className="flex-1 bg-hana-cream items-center justify-center">
+      <Text className="text-4xl mb-3">👤</Text>
+      <Text className="text-lg font-bold text-gray-700">내 정보</Text>
+      <Text className="text-sm text-gray-400 mt-1">프로필 · 설정 · 도움말</Text>
+    </View>
+  );
+}
+
+// ── 홈 스택 (HomeScreen → MissionUpload 딥링크 포함) ──────────────
+function HomeStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="HomeDashboard" component={HomeScreen} />
+      <Stack.Screen name="MissionCenter" component={MissionCenterScreen} />
+      <Stack.Screen
+        name="MissionUpload"
+        component={MissionUploadScreen}
+        options={{
+          headerShown: true,
+          headerTitle: '미션 인증',
+          headerTitleStyle: { fontWeight: '700', fontSize: 16 },
+          headerBackTitle: '',
+          headerTintColor: '#00A651',
+        }}
+      />
+    </Stack.Navigator>
+  );
+}
+
+// ── 메인 탭 네비게이터 ────────────────────────────────────────────
 export default function AppNavigator() {
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName="HomeDashboard">
-        {/* Figma 매칭: [메인보드 / 홈 대시보드] */}
-        <Stack.Screen
-          name="HomeDashboard"
-          component={HomeDashboard}
-          options={{ title: '하나 더 — 홈' }}
+      <Tab.Navigator
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: {
+            backgroundColor: '#FFFFFF',
+            borderTopColor: '#F3F4F6',
+            borderTopWidth: 1,
+            height: 72,
+            paddingBottom: 8,
+            paddingTop: 4,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.06,
+            shadowRadius: 8,
+            elevation: 8,
+          },
+          tabBarShowLabel: false,
+        }}
+      >
+        <Tab.Screen
+          name="Home"
+          component={HomeStack}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon emoji="🏠" label="홈" focused={focused} color="#00A651" />
+            ),
+          }}
         />
-        {/* Figma 매칭: [미션 센터] */}
-        <Stack.Screen
+        <Tab.Screen
           name="MissionCenter"
-          component={MissionCenter}
-          options={{ title: '미션 센터' }}
+          component={MissionCenterScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon emoji="⚡" label="미션" focused={focused} color="#00A651" />
+            ),
+          }}
         />
-        {/* Figma 매칭: [대출/신용 리포트] */}
-        <Stack.Screen
-          name="CreditScoreDetail"
-          component={CreditScoreDetail}
-          options={{ title: '신용점수 상세' }}
+        <Tab.Screen
+          name="ItemStore"
+          component={ItemStoreScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon emoji="🛒" label="스토어" focused={focused} color="#00A651" />
+            ),
+            tabBarBadge: 'NEW',
+            tabBarBadgeStyle: {
+              backgroundColor: '#F5A623',
+              color: 'white',
+              fontSize: 8,
+              fontWeight: '700',
+            },
+          }}
         />
-      </Stack.Navigator>
+        <Tab.Screen
+          name="FinanceReport"
+          component={FinanceReportScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon emoji="📊" label="리포트" focused={focused} color="#00A651" />
+            ),
+          }}
+        />
+        <Tab.Screen
+          name="MyPage"
+          component={MyPageScreen}
+          options={{
+            tabBarIcon: ({ focused }) => (
+              <TabIcon emoji="👤" label="내 정보" focused={focused} color="#00A651" />
+            ),
+          }}
+        />
+      </Tab.Navigator>
     </NavigationContainer>
   );
 }
