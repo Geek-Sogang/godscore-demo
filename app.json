@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "하나 더",
+    "slug": "hana-more",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "hana-more",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#00793A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.jjangsaite.hanamore",
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "건강 데이터를 갓생점수 산출에 활용합니다.",
+        "NSHealthUpdateUsageDescription": "건강 데이터를 갓생점수 산출에 활용합니다."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#00793A"
+      },
+      "package": "com.jjangsaite.hanamore",
+      "permissions": [
+        "ACTIVITY_RECOGNITION",
+        "ACCESS_FINE_LOCATION",
+        "READ_CALL_LOG"
+      ]
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "hana-more-dev"
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Dependency directories
+node_modules/
+
+# React Native / Expo
+.expo/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# macOS
+.DS_Store
+
+# Docs / Design files
+*.pdf
+*.docx
+*.doc
+*.hwp
