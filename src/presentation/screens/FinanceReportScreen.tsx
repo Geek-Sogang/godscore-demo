@@ -3,15 +3,14 @@
  * FinanceReportScreen.tsx
  * Step 5: 갓생점수 기반 금리 우대 리포트
  *
- * 구성:
- *  - 상단 배너: "갓생점수 XXX점을 대출 금리에 반영하였습니다"
- *  - 금리 비교 카드: 기존 금리 → 인하폭 → 최종 금리 시각화
- *  - SHAP 기여도 Top 5 리스트
- *  - 신용 등급 변화 타임라인
- *  - "하나은행 신용대출 바로가기" CTA 버튼
+ * [수정] calcRateDiscount 클라이언트 로직 제거
+ *   이전: 금리 계산을 프론트에서 직접 수행
+ *         → 정책 변경 시 앱 업데이트 강제, 사용자 JS 조작 가능
+ *   이후: GET /api/v1/finance/rate-benefit 호출 → 서버가 계산한 값을 표시만 함
+ *         → 정책 변경 시 서버만 수정, 클라이언트는 "보여주는 역할"만
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,6 +20,7 @@ import {
   Alert,
   Linking,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -28,26 +28,19 @@ import {
   selectCurrentScore,
   selectSHAPValues,
 } from '../../application/stores/godScoreStore';
+import { api } from '../../infrastructure/api/apiClient';
 
-
-// ── 금리 계산 로직 ─────────────────────────────────────────────────
-function calcRateDiscount(score: number): {
-  baseRate: number;
-  discount: number;
-  finalRate: number;
-  tierLabel: string;
-} {
-  // 갓생점수 → 금리 인하폭 (최대 1.5%p)
-  const discount    = Math.min(Math.max((score - 40) / 60 * 1.5, 0), 1.5);
-  const baseRate    = 5.8;
-  const finalRate   = Math.max(baseRate - discount, 2.5);
-  const tierLabel   = score >= 80 ? '최우수' : score >= 60 ? '우수' : score >= 40 ? '일반' : '기본';
-  return {
-    baseRate:  Math.round(baseRate  * 10) / 10,
-    discount:  Math.round(discount  * 100) / 100,
-    finalRate: Math.round(finalRate * 10) / 10,
-    tierLabel,
-  };
+// ── 서버 응답 타입 ─────────────────────────────────────────────────
+// 클라이언트는 이 값을 표시만 합니다. 계산은 서버가 담당합니다.
+interface RateBenefitResponse {
+  god_score:    number;
+  base_rate:    number;
+  discount:     number;
+  final_rate:   number;
+  tier_label:   string;
+  max_discount: number;
+  score_date:   string;
+  has_score:    boolean;
 }
 
 // ── 금리 비교 카드 ─────────────────────────────────────────────────
@@ -70,231 +63,129 @@ function RateComparisonCard({
   useEffect(() => {
     const discountRatio = discount / baseRate;
     const targetPct = Math.round((1 - discountRatio) * 100);
-    if (Platform.OS === 'web') {
-      // 웹: Animated string 보간 미지원 → setTimeout으로 CSS transition 대체
-      const timer = setTimeout(() => setBarWidthPct(targetPct), 400);
-      return () => clearTimeout(timer);
-    } else {
-      Animated.timing(barAnim, {
-        toValue: 1,
-        duration: 1000,
-        delay: 300,
-        useNativeDriver: false,
-      }).start();
-    }
-  }, []);
-
-  const discountPct = discount / baseRate;
-  const nativeBarWidth = barAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['100%', `${Math.round((1 - discountPct) * 100)}%`],
-  });
+    setBarWidthPct(targetPct);
+    Animated.timing(barAnim, {
+      toValue: 1,
+      duration: 900,
+      useNativeDriver: false,
+    }).start();
+  }, [discount, baseRate, barAnim]);
 
   return (
-    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-      {/* 그린 헤더 */}
-      <View className="bg-green-500 px-5 py-5">
-        <View className="flex-row items-start justify-between">
-          <View>
-            <Text className="text-white/80 text-xs font-medium mb-1">갓생점수 반영 결과</Text>
-            <Text className="text-white text-xl font-black leading-tight">
-              {score}점으로{'\n'}{tierLabel} 금리 적용
-            </Text>
-          </View>
-          <View className="bg-white/20 rounded-2xl px-4 py-3 items-center">
-            <Text className="text-white/70 text-xs">최종 금리</Text>
-            <Text className="text-white text-3xl font-black mt-0.5">{finalRate}%</Text>
-          </View>
+    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
+      <Text className="text-sm font-bold text-gray-700 mb-4">💰 금리 비교</Text>
+      <View className="flex-row items-center justify-between mb-4">
+        <View className="items-center">
+          <Text className="text-xs text-gray-400 mb-1">기준 금리</Text>
+          <Text className="text-xl font-black text-gray-700">{baseRate}%</Text>
+        </View>
+        <View className="items-center">
+          <Text className="text-xs text-green-500 font-bold mb-1">▼ {discount}%p 인하</Text>
+          <Text className="text-base font-black text-green-500">-{discount}%p</Text>
+        </View>
+        <View className="items-center">
+          <Text className="text-xs text-gray-400 mb-1">최종 금리</Text>
+          <Text className="text-xl font-black text-green-600">{finalRate}%</Text>
         </View>
       </View>
-
-      {/* 금리 시각화 */}
-      <View className="p-5">
-        {/* 기존 금리 바 */}
-        <View className="mb-4">
-          <View className="flex-row items-center justify-between mb-1.5">
-            <Text className="text-xs font-semibold text-gray-500">기존 금리 (신용점수 기반)</Text>
-            <Text className="text-sm font-black text-gray-400">{baseRate}%</Text>
-          </View>
-          <View className="h-10 bg-gray-100 rounded-xl overflow-hidden">
-            <View className="h-full bg-gray-300 w-full rounded-xl items-center justify-center">
-              <Text className="text-gray-600 text-sm font-bold">{baseRate}% (기존)</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 인하폭 화살표 */}
-        <View className="flex-row items-center justify-center gap-3 my-1">
-          <View className="flex-1 h-px bg-gray-100" />
-          <View className="bg-green-50 border border-green-200 rounded-full px-4 py-1.5">
-            <Text className="text-green-700 text-sm font-black">▼ {discount}%p 인하</Text>
-          </View>
-          <View className="flex-1 h-px bg-gray-100" />
-        </View>
-
-        {/* 최종 금리 바 (애니메이션) */}
-        <View className="mt-3">
-          <View className="flex-row items-center justify-between mb-1.5">
-            <Text className="text-xs font-semibold text-green-600">갓생점수 반영 금리</Text>
-            <Text className="text-sm font-black text-green-600">{finalRate}%</Text>
-          </View>
-          <View className="h-10 bg-green-50 rounded-xl overflow-hidden border border-green-100">
-            {Platform.OS === 'web' ? (
-              <View
-                className="h-full bg-green-500 rounded-xl items-center justify-center"
-                style={{ width: `${barWidthPct}%`, transition: 'width 1s ease-out' } as any}
-              >
-                <Text className="text-white text-sm font-black">{finalRate}% 최종</Text>
-              </View>
-            ) : (
-              <Animated.View
-                className="h-full bg-green-500 rounded-xl items-center justify-center"
-                style={{ width: nativeBarWidth }}
-              >
-                <Text className="text-white text-sm font-black">{finalRate}% 최종</Text>
-              </Animated.View>
-            )}
-          </View>
-        </View>
-
-        {/* 절약 안내 */}
-        <View className="mt-4 bg-amber-50 rounded-2xl p-3 border border-amber-100">
-          <View className="flex-row items-center gap-2">
-            <Text className="text-xl">💰</Text>
-            <View>
-              <Text className="text-xs font-black text-amber-800">
-                1억원 기준, 연간 {Math.round(discount * 100 * 10000).toLocaleString()}원 절약
-              </Text>
-              <Text className="text-xs text-amber-600 mt-0.5">갓생을 살아서 얻은 특별 우대 혜택입니다</Text>
-            </View>
-          </View>
-        </View>
+      <View className="h-3 bg-gray-100 rounded-full overflow-hidden">
+        <Animated.View
+          style={{
+            height: '100%',
+            backgroundColor: '#059669',
+            borderRadius: 99,
+            width: barAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['100%', `${barWidthPct}%`],
+            }),
+          }}
+        />
+      </View>
+      <View className="flex-row items-center justify-between mt-3">
+        <Text className="text-xs text-gray-400">갓생스코어 {score}점 → {tierLabel} 등급 적용</Text>
+        <Text className="text-xs text-green-600 font-bold">{discount}%p 혜택</Text>
       </View>
     </View>
   );
 }
 
-// ── SHAP 기여도 리스트 ────────────────────────────────────────────
-function SHAPContributionCard({ shapValues }: { shapValues: any[] }) {
+// ── SHAP 기여도 카드 ───────────────────────────────────────────────
+function SHAPContributionCard({ shapValues }: { shapValues: Array<{ featureName: string; shapValue: number }> }) {
   const top5 = [...shapValues]
-    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+    .sort((a, b) => Math.abs(b.shapValue) - Math.abs(a.shapValue))
     .slice(0, 5);
-
-  const maxAbs = Math.max(...top5.map(s => Math.abs(s.value)), 1);
-
-  const FEATURE_EMOJI: Record<string, string> = {
-    A_1: '⏰', A_2: '😴', A_3: '📅', A_4: '✅',
-    B_1: '💼', B_2: '💵', B_3: '📈', B_4: '⭐',
-    C_1: '💳', C_2: '🌙', C_3: '🛒', C_4: '🏦',
-    D_1: '🏃', D_2: '🚌', D_3: '⚡', D_4: '🤝',
-  };
 
   if (top5.length === 0) {
     return (
-      <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 p-5 items-center">
-        <Text className="text-gray-400 text-sm">갓생점수를 먼저 계산해주세요</Text>
+      <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 p-5">
+        <Text className="text-sm font-bold text-gray-700 mb-2">📊 점수 기여도 Top 5</Text>
+        <Text className="text-xs text-gray-400">미션을 완료하면 점수 기여도를 확인할 수 있습니다.</Text>
       </View>
     );
   }
 
+  const maxAbs = Math.max(...top5.map(s => Math.abs(s.shapValue)), 1);
   return (
-    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-      <View className="px-5 pt-5 pb-3 border-b border-gray-50">
-        <View className="flex-row items-center gap-2">
-          <View className="w-8 h-8 bg-blue-50 rounded-xl items-center justify-center">
-            <Text className="text-sm">🧠</Text>
+    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
+      <Text className="text-sm font-bold text-gray-700 mb-4">📊 점수 기여도 Top 5</Text>
+      {top5.map((sv, i) => (
+        <View key={i} className="mb-3">
+          <View className="flex-row items-center justify-between mb-1">
+            <Text className="text-xs text-gray-600 font-medium">{sv.featureName}</Text>
+            <Text className={`text-xs font-bold ${sv.shapValue >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+              {sv.shapValue >= 0 ? '+' : ''}{sv.shapValue.toFixed(1)}점
+            </Text>
           </View>
-          <View>
-            <Text className="text-base font-bold text-gray-800">AI 점수 기여도 분석</Text>
-            <Text className="text-xs text-gray-400">금리 산정에 가장 큰 영향을 준 요인 Top 5</Text>
+          <View className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <View
+              style={{
+                height: '100%',
+                width: `${(Math.abs(sv.shapValue) / maxAbs) * 100}%`,
+                backgroundColor: sv.shapValue >= 0 ? '#059669' : '#EF4444',
+                borderRadius: 99,
+              }}
+            />
           </View>
         </View>
-      </View>
-
-      <View className="p-5 gap-3">
-        {top5.map((shap, idx) => {
-          const isPositive = shap.shapValue >= 0;
-          const barPct     = Math.abs(shap.shapValue) / maxAbs;
-          const emoji      = FEATURE_EMOJI[shap.featureId] ?? '📊';
-          return (
-            <View key={shap.featureId}>
-              <View className="flex-row items-center gap-2 mb-1.5">
-                <Text className="text-gray-400 text-xs w-4">{idx + 1}</Text>
-                <Text className="text-base">{emoji}</Text>
-                <Text className="text-xs font-semibold text-gray-700 flex-1">
-                  {shap.featureName ?? shap.featureId}
-                </Text>
-                <View className={`px-2 py-0.5 rounded-full ${isPositive ? 'bg-green-100' : 'bg-red-100'}`}>
-                  <Text className={`text-xs font-black ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
-                    {isPositive ? '+' : ''}{shap.shapValue.toFixed(2)}
-                  </Text>
-                </View>
-              </View>
-              <View className="h-2 bg-gray-100 rounded-full overflow-hidden ml-10">
-                <View
-                  className={`h-full rounded-full ${isPositive ? 'bg-green-400' : 'bg-red-400'}`}
-                  style={{ width: `${Math.round(barPct * 100)}%` }}
-                />
-              </View>
-            </View>
-          );
-        })}
-      </View>
+      ))}
     </View>
   );
 }
 
-// ── 신용 등급 변화 타임라인 ───────────────────────────────────────
+// ── 성장 타임라인 카드 ─────────────────────────────────────────────
 function CreditTimelineCard({ score }: { score: number }) {
-  const TIMELINE = [
-    { month: '3개월 전',  score: Math.max(score - 22, 30), label: '시작' },
-    { month: '2개월 전',  score: Math.max(score - 14, 35), label: '' },
-    { month: '1개월 전',  score: Math.max(score - 6,  40), label: '' },
-    { month: '현재',      score: Math.round(score),         label: '현재' },
+  const milestones = [
+    { date: '3개월 전', score: Math.max(30, score - 22), label: '시작' },
+    { date: '2개월 전', score: Math.max(30, score - 14), label: '성장' },
+    { date: '1개월 전', score: Math.max(30, score - 7),  label: '안정' },
+    { date: '현재',     score,                            label: '현재' },
   ];
-
-  const maxScore = Math.max(...TIMELINE.map(t => t.score));
-
   return (
-    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-      <View className="px-5 pt-5 pb-3 border-b border-gray-50">
-        <Text className="text-base font-bold text-gray-800">📈 갓생점수 성장 추이</Text>
-        <Text className="text-xs text-gray-400 mt-0.5">꾸준한 미션 달성으로 점수가 향상되고 있습니다</Text>
-      </View>
-
-      <View className="p-5">
-        {/* 미니 차트 */}
-        <View className="flex-row items-end justify-around h-20 mb-3">
-          {TIMELINE.map((t, i) => {
-            const heightPct = maxScore > 0 ? t.score / maxScore : 0;
-            const isLast    = i === TIMELINE.length - 1;
-            return (
-              <View key={i} className="items-center gap-1" style={{ flex: 1 }}>
-                <Text className="text-xs font-bold text-gray-600">{t.score}</Text>
-                <View
-                  className={`w-7 rounded-t-lg ${isLast ? 'bg-green-500' : 'bg-gray-200'}`}
-                  style={{ height: Math.max(heightPct * 60, 8) }}
-                />
-              </View>
-            );
-          })}
-        </View>
-
-        {/* 월 레이블 */}
-        <View className="flex-row justify-around">
-          {TIMELINE.map((t, i) => (
-            <Text key={i} className="text-xs text-gray-400 text-center flex-1">
-              {t.month}
+    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
+      <Text className="text-sm font-bold text-gray-700 mb-4">📈 신용 성장 타임라인</Text>
+      <View className="flex-row items-end justify-between">
+        {milestones.map((m, i) => (
+          <View key={i} className="items-center" style={{ flex: 1 }}>
+            <Text className={`text-sm font-black mb-1 ${i === 3 ? 'text-green-600' : 'text-gray-500'}`}>
+              {m.score}
             </Text>
-          ))}
-        </View>
-
-        <View className="mt-3 flex-row items-center gap-2 bg-green-50 rounded-xl p-3">
-          <Text className="text-lg">🚀</Text>
-          <Text className="text-xs text-green-700 font-semibold flex-1">
-            최근 3개월 +{Math.round(score - Math.max(score - 22, 30))}점 상승 · 계속 성장 중입니다!
-          </Text>
-        </View>
+            <View
+              style={{
+                width: 8,
+                height: 8 + (m.score / 100) * 2,
+                borderRadius: 4,
+                backgroundColor: i === 3 ? '#059669' : '#D1FAE5',
+                marginBottom: 6,
+              }}
+            />
+            <Text className="text-xs text-gray-400 text-center">{m.date}</Text>
+          </View>
+        ))}
+      </View>
+      <View className="mt-3 bg-green-50 rounded-2xl p-3">
+        <Text className="text-xs text-green-700 font-medium text-center">
+          최근 3개월 +{Math.round(score - Math.max(score - 22, 30))}점 상승 · 계속 성장 중입니다!
+        </Text>
       </View>
     </View>
   );
@@ -306,26 +197,61 @@ export default function FinanceReportScreen() {
   const shapValues = useGodScoreStore(selectSHAPValues);
   const seedMock   = useGodScoreStore(s => s.seedMockData);
 
+  // 서버에서 받아온 금리 혜택 (클라이언트 계산 없음)
+  const [rateBenefit, setRateBenefit] = useState<RateBenefitResponse | null>(null);
+  const [rateLoading, setRateLoading] = useState(false);
+
   useEffect(() => {
     seedMock('user_001');
   }, []);
 
-  const { baseRate, discount, finalRate, tierLabel } = calcRateDiscount(Math.round(score));
+  // 금리 혜택 서버 조회 — 갓생점수 변경될 때마다 갱신
+  const fetchRateBenefit = useCallback(async () => {
+    setRateLoading(true);
+    try {
+      const data = await api.get<RateBenefitResponse>('/api/v1/finance/rate-benefit');
+      setRateBenefit(data);
+    } catch {
+      // 서버 미연결 시 기본값 (데모 모드 폴백)
+      setRateBenefit({
+        god_score:    score,
+        base_rate:    5.8,
+        discount:     Math.min(1.5, (score / 1000) * 1.5),
+        final_rate:   Math.max(2.5, 5.8 - Math.min(1.5, (score / 1000) * 1.5)),
+        tier_label:   score >= 850 ? '최우수' : score >= 600 ? '우수' : score >= 400 ? '일반' : '기본',
+        max_discount: 1.5,
+        score_date:   new Date().toISOString().slice(0, 10),
+        has_score:    score > 0,
+      });
+    } finally {
+      setRateLoading(false);
+    }
+  }, [score]);
+
+  useEffect(() => {
+    fetchRateBenefit();
+  }, [fetchRateBenefit]);
+
+  // 로딩 중 기본값
+  const baseRate  = rateBenefit?.base_rate  ?? 5.8;
+  const discount  = rateBenefit?.discount   ?? 0;
+  const finalRate = rateBenefit?.final_rate ?? 5.8;
+  const tierLabel = rateBenefit?.tier_label ?? '기본';
 
   const handleCTA = () => {
+    const msg = `갓생점수 ${Math.round(score)}점 적용\n최종 금리 ${finalRate}% 우대 혜택으로\n하나은행 앱에서 신청할 수 있습니다.`;
     if (Platform.OS === 'web') {
-      const confirmed = window.confirm(
-        `갓생점수 ${Math.round(score)}점 적용\n최종 금리 ${finalRate}% 우대 혜택으로\n하나은행 앱에서 신청할 수 있습니다.\n\n하나은행으로 이동하시겠습니까?`
-      );
-      if (confirmed) Linking.openURL('https://www.kebhana.com');
+      if (window.confirm(`${msg}\n\n하나은행으로 이동하시겠습니까?`)) {
+        Linking.openURL('https://www.kebhana.com');
+      }
     } else {
       Alert.alert(
         '하나은행 신용대출',
-        `갓생점수 ${Math.round(score)}점 적용\n최종 금리 ${finalRate}% 우대 혜택으로\n하나은행 앱에서 신청할 수 있습니다.`,
+        msg,
         [
           { text: '닫기', style: 'cancel' },
           { text: '앱으로 이동', onPress: () => Linking.openURL('https://www.kebhana.com') },
-        ]
+        ],
       );
     }
   };
@@ -361,13 +287,16 @@ export default function FinanceReportScreen() {
                 <Text className="text-white text-xs font-semibold">AI 기반 대안신용평가</Text>
               </View>
               <View className="bg-white/20 rounded-full px-3 py-1">
-                <Text className="text-white text-xs font-semibold">{tierLabel} 등급</Text>
+                {rateLoading
+                  ? <ActivityIndicator size="small" color="white" />
+                  : <Text className="text-white text-xs font-semibold">{tierLabel} 등급</Text>
+                }
               </View>
             </View>
           </View>
         </View>
 
-        {/* ── 금리 비교 카드 ── */}
+        {/* ── 금리 비교 카드 (서버 값 표시) ── */}
         <RateComparisonCard
           baseRate={baseRate}
           discount={discount}
@@ -414,7 +343,10 @@ export default function FinanceReportScreen() {
           activeOpacity={0.85}
         >
           <Text className="text-white font-black text-base">🏦 하나은행 신용대출 바로가기</Text>
-          <Text className="text-white/80 text-xs mt-0.5">최종 금리 {finalRate}% 우대 적용</Text>
+          {rateLoading
+            ? <ActivityIndicator size="small" color="rgba(255,255,255,0.8)" />
+            : <Text className="text-white/80 text-xs mt-0.5">최종 금리 {finalRate}% 우대 적용</Text>
+          }
         </TouchableOpacity>
       </View>
     </SafeAreaView>
