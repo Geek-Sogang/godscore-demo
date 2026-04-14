@@ -1,10 +1,13 @@
 """
 app/schemas/godscore.py
 갓생스코어 계산 요청 및 응답 Pydantic 스키마.
+
+[변경] GodScoreHistoryItem에 intra_weights 필드 추가
+       → 분기별 재학습으로 갱신된 카테고리 내 미션별 가중치 응답에 포함
 """
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict
 
 
 class GodScoreFeatures(BaseModel):
@@ -40,3 +43,16 @@ class GodScoreHistoryItem(BaseModel):
     fb_score: Optional[float] = None
     fc_score: Optional[float] = None
     fd_score: Optional[float] = None
+
+
+class IntraWeightsResponse(BaseModel):
+    """
+    카테고리 내 현재 미션별 가중치 응답.
+    분기 재학습 후 갱신된 값을 그대로 반환.
+    각 카테고리(A/B/C/D) 내 4개 피처 가중치 합계 = 1.0
+    """
+    weights: Dict[str, float] = Field(
+        description="피처명 → 가중치 매핑 (e.g. {'A1_wake_score': 0.30, ...})"
+    )
+    model_version: str
+    last_updated: Optional[str] = Field(None, description="마지막 재학습 날짜 (ISO 8601)")
