@@ -2,10 +2,10 @@
 /**
  * MissionCenterScreen.tsx — Step 2 미션 센터
  *
- * 수정 이력:
- *  - processingMissionIds (Set) → processingMissionId (단일값) 통일
- *  - loadAndRefreshAll → loadDailyMissions 호출로 변경 (SSoT)
- *  - 웹 호환: Platform.OS='web' 시 Alert 대신 console + 상태 표시
+ * [수정] 미션 유형별 제출 분기 로직 추가
+ *   FILE_UPLOAD 미션 (B_1, B_4, D_3, D_4) → MissionUploadScreen으로 네비게이션
+ *   그 외 미션 (INSTANT, DURATION, MYDATA) → MissionInputModal 표시
+ *   MissionInputModal onSubmit → completeMission 호출 → txHash 저장
  *
  * 구성:
  *  - 상단 4탭 카테고리 (생활 루틴 / 일·소득 / 소비 행동 / 개인 ESG)
@@ -25,9 +25,25 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useMissionStore } from '../../application/stores/missionStore';
 import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
 import type { MissionFeatureId } from '../../../types/features';
+import MissionInputModal from './MissionInputModal';
+import type { MissionStackParamList } from '../navigation/AppNavigator';
+
+// ── 네비게이션 타입 ──────────────────────────────────────────────────
+type MissionNavProp = NativeStackNavigationProp<MissionStackParamList, 'MissionCenterMain'>;
+
+// ── 파일 업로드 미션 ID 목록 ─────────────────────────────────────────
+// 이 미션들은 파일/사진 첨부가 필요해서 MissionUploadScreen으로 이동
+const FILE_UPLOAD_MISSIONS: ReadonlySet<string> = new Set([
+  'B_1', // 포트폴리오 업데이트 (PDF/MP4/PNG/ZIP)
+  'B_4', // 업무 완료 인증 (스크린샷/링크)
+  'D_3', // 에너지 절약 미션 (고지서 사진 OCR)
+  'D_4', // 봉사·기부 활동 (확인서/영수증)
+]);
 
 // ── 미션 ID → 이모지 ─────────────────────────────────────────────
 const MISSION_EMOJI: Record<string, string> = {
@@ -167,6 +183,7 @@ function MissionCard({
   definition,
   isCompleted,
   isProcessing,
+  isFileUpload,
   txHash,
   meta,
   onComplete,
@@ -175,6 +192,7 @@ function MissionCard({
   definition: typeof MISSION_DEFINITIONS[keyof typeof MISSION_DEFINITIONS];
   isCompleted: boolean;
   isProcessing: boolean;
+  isFileUpload: boolean;
   txHash?: string;
   meta: CategoryMeta;
   onComplete: (id: MissionFeatureId) => void;
@@ -203,6 +221,12 @@ function MissionCard({
               {isCompleted && (
                 <View className="bg-green-500 rounded-full px-2 py-0.5">
                   <Text className="text-white text-xs font-bold">완료 ✓</Text>
+                </View>
+              )}
+              {/* 파일 업로드 미션 뱃지 */}
+              {isFileUpload && !isCompleted && (
+                <View className="bg-purple-100 rounded-full px-2 py-0.5">
+                  <Text className="text-purple-600 text-xs font-semibold">📎 파일 첨부</Text>
                 </View>
               )}
             </View>
@@ -248,7 +272,9 @@ function MissionCard({
                 <Text className="text-gray-500 text-sm font-semibold">인증 중...</Text>
               </>
             ) : (
-              <Text className="text-white text-sm font-bold">미션 완료 인증 →</Text>
+              <Text className="text-white text-sm font-bold">
+                {isFileUpload ? '📎 파일 업로드하여 인증 →' : '미션 완료 인증 →'}
+              </Text>
             )}
           </TouchableOpacity>
         )}
@@ -268,15 +294,19 @@ function showAlert(title: string, message: string) {
 
 // ── 메인 컴포넌트 ────────────────────────────────────────────────────
 export default function MissionCenterScreen() {
-  const [activeTab, setActiveTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
-  const [txHashes, setTxHashes]   = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab]         = useState<'A' | 'B' | 'C' | 'D'>('A');
+  const [txHashes, setTxHashes]           = useState<Record<string, string>>({});
+  // 모달에 표시할 미션 ID (null이면 모달 닫힘)
+  const [modalMissionId, setModalMissionId] = useState<MissionFeatureId | null>(null);
 
-  // ── [수정] processingMissionId (단일값) ──────────────────────────
-  const dailyStatus        = useMissionStore(s => s.dailyStatus);
+  // ── 스토어 선택 ──────────────────────────────────────────────────
+  const dailyStatus         = useMissionStore(s => s.dailyStatus);
   const processingMissionId = useMissionStore(s => s.processingMissionId);
-  const completeMission    = useMissionStore(s => s.completeMission);
-  // ── [수정] loadDailyMissions (SSoT) ─────────────────────────────
-  const loadDailyMissions  = useMissionStore(s => s.loadDailyMissions);
+  const completeMission     = useMissionStore(s => s.completeMission);
+  const loadDailyMissions   = useMissionStore(s => s.loadDailyMissions);
+
+  // ── 네비게이션 (MissionStack 안에서 실행) ───────────────────────
+  const navigation = useNavigation<MissionNavProp>();
 
   useEffect(() => {
     loadDailyMissions(MOCK_USER_ID);
@@ -292,22 +322,49 @@ export default function MissionCenterScreen() {
     ([id]) => dailyStatus?.missions[id] === true
   ).length;
 
+  /**
+   * 미션 인증 버튼 클릭 시 분기 처리
+   *   1. FILE_UPLOAD → MissionUploadScreen으로 이동
+   *   2. INSTANT/DURATION/MYDATA → MissionInputModal 표시
+   */
   const handleComplete = useCallback(
-    async (missionId: MissionFeatureId) => {
+    (missionId: MissionFeatureId) => {
+      if (FILE_UPLOAD_MISSIONS.has(missionId)) {
+        // 파일 업로드 미션 → 전용 업로드 화면으로 이동
+        navigation.navigate('MissionUpload', { missionId });
+      } else {
+        // 나머지 미션 → 인라인 입력 모달 표시
+        setModalMissionId(missionId);
+      }
+    },
+    [navigation],
+  );
+
+  /**
+   * 모달에서 데이터 제출 완료 시 호출
+   * rawDataJson: 미션별 수집 데이터 JSON 문자열
+   * aiScore: AI 검증 점수 (0~100)
+   */
+  const handleModalSubmit = useCallback(
+    async (rawDataJson: string, aiScore: number) => {
+      if (!modalMissionId) return;
+      const missionId = modalMissionId;
+      // 모달을 먼저 닫아서 중복 제출 방지
+      setModalMissionId(null);
       try {
         const result = await completeMission(
           MOCK_USER_ID,
           missionId,
-          JSON.stringify({ missionId, ts: Date.now() }),
-          Math.random() * 40 + 60,
+          rawDataJson,
+          aiScore,
         );
         setTxHashes(prev => ({ ...prev, [missionId]: result.txHash }));
-        showAlert('🎉 미션 완료!', `블록체인에 기록되었습니다.\n+50 코인 획득!`);
+        showAlert('🎉 미션 완료!', `블록체인에 기록되었습니다.\n+${MISSION_DEFINITIONS[missionId]?.rewardPoints ?? 50} 코인 획득!`);
       } catch {
         showAlert('오류', '미션 처리 중 문제가 발생했습니다.');
       }
     },
-    [completeMission],
+    [modalMissionId, completeMission],
   );
 
   return (
@@ -350,8 +407,8 @@ export default function MissionCenterScreen() {
         <View className="mt-3">
           {categoryMissions.map(([missionId, def]) => {
             const isCompleted  = dailyStatus?.missions[missionId] === true;
-            // [수정] processingMissionId === missionId (단일값 비교)
             const isProcessing = processingMissionId === missionId;
+            const isFileUpload = FILE_UPLOAD_MISSIONS.has(missionId);
             return (
               <MissionCard
                 key={missionId}
@@ -359,6 +416,7 @@ export default function MissionCenterScreen() {
                 definition={def}
                 isCompleted={isCompleted}
                 isProcessing={isProcessing}
+                isFileUpload={isFileUpload}
                 txHash={txHashes[missionId]}
                 meta={currentMeta}
                 onComplete={handleComplete}
@@ -394,6 +452,17 @@ export default function MissionCenterScreen() {
           })}
         </View>
       </ScrollView>
+
+      {/* ── 인라인 미션 입력 모달 (INSTANT / DURATION / MYDATA 유형) ── */}
+      {/* modalMissionId가 null이 아닐 때만 렌더링 → missionId 타입 보장 */}
+      {modalMissionId !== null && (
+        <MissionInputModal
+          visible={true}
+          missionId={modalMissionId}
+          onClose={() => setModalMissionId(null)}
+          onSubmit={handleModalSubmit}
+        />
+      )}
     </SafeAreaView>
   );
 }
