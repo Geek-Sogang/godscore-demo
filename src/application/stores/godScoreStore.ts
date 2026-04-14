@@ -2,16 +2,21 @@
  * src/application/stores/godScoreStore.ts
  * 갓생스코어 Store — FastAPI 서버 연동 버전
  *
- * 3단계 풀스택 전환:
- *   이전: 클라이언트 사이드 executeCalculateGodScore() 직접 호출
- *   이후: FastAPI POST /api/v1/godscore/calculate 비동기 호출
- *         서버에서 XGBoost + SHAP + Supabase 저장 일괄 처리
+ * [수정] 백엔드 응답 필드명과 프론트 타입의 불일치 수정
+ *   이전: total_score / fa / tier → 백엔드 응답에 없는 필드 → 모두 undefined
+ *   이후: final_score / category_scores.fA / grade → 실제 백엔드 응답과 일치
  *
- * 분기/누적 반영:
- *   S_final = 0.7 × S_quarterly + 0.3 × S_cumulative
- *   - S_quarterly: 당일 XGBoost 추론값
- *   - S_cumulative: Supabase godscores 테이블 누적 이동평균
- *   - quarterlyBaseScore: 분기 정산 시점 고정 스냅샷 (서버에서 관리)
+ * [수정] generateMockFeatures 키 오타 수정
+ *   이전: a1_wake_time, a2_sleep_regularity (소문자, 다른 이름)
+ *   이후: A1_wake_score, A2_sleep_score (백엔드 FEATURE_COLUMNS 와 정확히 일치)
+ *
+ * [수정] CalculateGodScoreRequest 에 없는 quarterly_base_score 필드 제거
+ *
+ * 응답 데이터 흐름:
+ *   백엔드 engine.calculate() 반환값
+ *   → GodScoreApiResponse 타입으로 수신
+ *   → mapApiResponseToSnapshot() 로 GodScoreSnapshot 변환
+ *   → Zustand store 저장
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -28,142 +33,209 @@ import {
   GOD_SCORE_TIER_TABLE,
   getTierByScore,
 } from '../../../types/godScore';
+import type { FeatureVector } from '../../../types/featureKeys';
+import { FEATURE_KEYS, FEATURE_LABEL } from '../../../types/featureKeys';
 import { api } from '../../infrastructure/api/apiClient';
 
-// ── FastAPI 응답 타입 ─────────────────────────────────────
+// ── 백엔드 응답 타입 ─────────────────────────────────────
+// 백엔드 godscore_engine.calculate() 의 실제 반환 구조와 1:1 매핑
+// 변경 시 반드시 backend/app/services/godscore_engine.py 와 동기화할 것
 
-interface GodScoreCalculateResponse {
-  user_id: string;
-  score_date: string;
-  total_score: number;
-  quarterly_score: number;
-  cumulative_score: number;
-  fa: number;
-  fb: number;
-  fc: number;
-  fd: number;
-  weights: { wA: number; wB: number; wC: number; wD: number };
-  shap_values: Array<{
-    feature_id: string;
-    feature_name: string;
-    shap_value: number;
-    baseline_score: number;
-  }>;
-  tier: string;
-  calculated_at: string;
+/**
+ * POST /api/v1/godscore/calculate 응답
+ * godscore_engine.GodScoreEngine.calculate() 반환값 그대로
+ */
+interface GodScoreApiResponse {
+  final_score:     number;          // S_final = 0.7×quarterly + 0.3×cumulative
+  quarterly_score: number;          // XGBoost 추론 점수
+  cumulative_score: number;         // 누적 이동평균 점수
+  category_scores: {
+    fA: number;                     // 생활 루틴 카테고리 점수 (0.0~1.0)
+    fB: number;                     // 일·소득 카테고리 점수
+    fC: number;                     // 소비 행동 카테고리 점수
+    fD: number;                     // 개인 ESG 카테고리 점수
+  };
+  intra_weights: Record<string, number>;  // 카테고리 내 미션별 가중치
+  grade:         string;            // 한국어 등급 ("새싹" | "성실" | "갓생" | "레전드")
+  grade_emoji:   string;            // 등급 이모지
+  shap: {
+    [featureKey: string]: number | string[];  // 피처별 SHAP 값 + top_improvement_features
+    top_improvement_features: string[];
+  };
+  estimated_rate_discount: number;  // 금리 인하 비율 (0.0~1.0)
+  model_version: string;
+  score_date:    string;            // "YYYY-MM-DD"
 }
 
-interface GodScoreLatestResponse {
-  score_date: string;
-  total_score: number;
-  quarterly_score: number;
+/**
+ * GET /api/v1/godscore/latest 응답
+ * Supabase godscores 테이블 컬럼 그대로
+ */
+interface GodScoreLatestApiResponse {
+  score_date:       string;
+  final_score:      number;
+  quarterly_score:  number;
   cumulative_score: number;
-  fa: number;
-  fb: number;
-  fc: number;
-  fd: number;
-  tier: string;
-  shap_values: Array<{
-    feature_id: string;
-    feature_name: string;
-    shap_value: number;
-    baseline_score: number;
-  }> | null;
+  fa_score:         number | null;  // Supabase 컬럼명: fa_score (not fa)
+  fb_score:         number | null;
+  fc_score:         number | null;
+  fd_score:         number | null;
+  grade:            string;
+  shap_values:      Record<string, unknown> | null;
+  message?:         string;         // 점수 없을 때 메시지 필드
 }
 
 // ── Zustand Store 타입 ────────────────────────────────────
 
 interface GodScoreState {
-  currentSnapshot: GodScoreSnapshot | null;
-  history: GodScoreSnapshot[];
-  categoryWeights: CategoryWeights;
-  featureWeights: FeatureWeights;
-  /**
-   * 분기 정산 시점에 고정된 베이스 점수.
-   * settleQuarterlyScore() 에서만 갱신 — calculateScore() 에서는 불변.
-   */
+  currentSnapshot:    GodScoreSnapshot | null;
+  history:            GodScoreSnapshot[];
+  categoryWeights:    CategoryWeights;
+  featureWeights:     FeatureWeights;
   quarterlyBaseScore: number;
   quarterlySettledAt: string | null;
-  isCalculating: boolean;
-  error: string | null;
+  isCalculating:      boolean;
+  error:              string | null;
 }
 
 interface GodScoreActions {
-  /** FastAPI /calculate 호출 → 서버 XGBoost 추론 */
-  calculateScore: (userId: string, features?: Record<string, number>) => Promise<void>;
-  /** 서버에서 최신 저장 점수 로드 */
-  loadLatestScore: (userId: string) => Promise<void>;
-  /** 분기 정산 — 현재 점수를 quarterlyBaseScore로 확정 */
+  calculateScore:    (userId: string, features?: FeatureVector) => Promise<void>;
+  loadLatestScore:   (userId: string) => Promise<void>;
   settleQuarterlyScore: () => void;
   getSnapshotByDate: (date: string) => GodScoreSnapshot | undefined;
-  updateWeights: (newCategoryWeights: CategoryWeights, newFeatureWeights: FeatureWeights) => void;
+  updateWeights:     (newCategoryWeights: CategoryWeights, newFeatureWeights: FeatureWeights) => void;
   getTopSHAPFeatures: (limit?: number) => SHAPValue[];
-  clearError: () => void;
-  /** Mock 시딩 (오프라인 시연용) */
-  seedMockData: (userId: string) => void;
+  clearError:        () => void;
+  seedMockData:      (userId: string) => void;
 }
 
-// ── 응답 변환 유틸 ────────────────────────────────────────
+// ── 응답 변환 ─────────────────────────────────────────────
 
-function buildSnapshot(
+/**
+ * 백엔드 calculate 응답 → GodScoreSnapshot 변환
+ */
+function mapCalculateToSnapshot(
   userId: string,
-  response: GodScoreCalculateResponse | GodScoreLatestResponse,
+  res: GodScoreApiResponse,
   categoryWeights: CategoryWeights,
   featureWeights: FeatureWeights,
 ): GodScoreSnapshot {
-  const shapValues: SHAPValue[] = (response.shap_values ?? []).map(s => ({
-    featureId:     s.feature_id,
-    featureName:   s.feature_name,
-    shapValue:     s.shap_value,
-    baselineScore: s.baseline_score,
-  }));
+  // SHAP 값 변환: {A1_wake_score: 12.3, ...} → SHAPValue[]
+  const shapValues: SHAPValue[] = FEATURE_KEYS
+    .filter(k => typeof res.shap[k] === 'number')
+    .map(k => ({
+      featureId:     k,
+      featureName:   FEATURE_LABEL[k],
+      shapValue:     res.shap[k] as number,
+      baselineScore: 0,     // 백엔드에서 baseline을 별도 제공하지 않음
+    }));
 
   const breakdown: GodScoreBreakdown = {
-    fA:         parseFloat((response.fa * 100).toFixed(1)),
-    fB:         parseFloat((response.fb * 100).toFixed(1)),
-    fC:         parseFloat((response.fc * 100).toFixed(1)),
-    fD:         parseFloat((response.fd * 100).toFixed(1)),
-    totalScore: Math.round(response.total_score),
+    fA:         parseFloat(((res.category_scores.fA ?? 0) * 100).toFixed(1)),
+    fB:         parseFloat(((res.category_scores.fB ?? 0) * 100).toFixed(1)),
+    fC:         parseFloat(((res.category_scores.fC ?? 0) * 100).toFixed(1)),
+    fD:         parseFloat(((res.category_scores.fD ?? 0) * 100).toFixed(1)),
+    totalScore: Math.round(res.final_score ?? 0),
   };
 
-  const tier = getTierByScore(breakdown.totalScore);
-
   return {
-    id:               `${userId}_${response.score_date}`,
+    id:                  `${userId}_${res.score_date}`,
     userId,
-    date:             response.score_date,
+    date:                res.score_date,
     breakdown,
-    weights:          categoryWeights,
+    weights:             categoryWeights,
     featureWeights,
     shapValues,
-    tier,
-    quarterlyWeight:  0.70,
-    accumulativeWeight: 0.30,
-    movingAvg90dScore: Math.round(response.cumulative_score),
-    createdAt:        new Date().toISOString(),
+    tier:                getTierByScore(breakdown.totalScore),
+    quarterlyWeight:     0.70,
+    accumulativeWeight:  0.30,
+    movingAvg90dScore:   Math.round(res.cumulative_score ?? 0),
+    createdAt:           new Date().toISOString(),
   };
 }
 
-// ── Mock 피처 (오프라인 폴백용) ───────────────────────────
-function generateMockFeatures(): Record<string, number> {
-  const r = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+/**
+ * Supabase godscores 테이블 행 → GodScoreSnapshot 변환
+ */
+function mapLatestToSnapshot(
+  userId: string,
+  res: GodScoreLatestApiResponse,
+  categoryWeights: CategoryWeights,
+  featureWeights: FeatureWeights,
+): GodScoreSnapshot {
+  const totalScore = Math.round(res.final_score ?? 0);
+
+  // Supabase 컬럼명: fa_score (백엔드 응답: fA)
+  const breakdown: GodScoreBreakdown = {
+    fA:         parseFloat(((res.fa_score ?? 0) * 100).toFixed(1)),
+    fB:         parseFloat(((res.fb_score ?? 0) * 100).toFixed(1)),
+    fC:         parseFloat(((res.fc_score ?? 0) * 100).toFixed(1)),
+    fD:         parseFloat(((res.fd_score ?? 0) * 100).toFixed(1)),
+    totalScore,
+  };
+
+  // shap_values 는 DB에 JSON 저장 — 구조 동일하게 복원
+  const shapValues: SHAPValue[] = [];
+  if (res.shap_values && typeof res.shap_values === 'object') {
+    for (const key of FEATURE_KEYS) {
+      const val = (res.shap_values as Record<string, unknown>)[key];
+      if (typeof val === 'number') {
+        shapValues.push({
+          featureId:     key,
+          featureName:   FEATURE_LABEL[key],
+          shapValue:     val,
+          baselineScore: 0,
+        });
+      }
+    }
+  }
+
   return {
-    a1_wake_time:            r(0.55, 0.90),
-    a2_sleep_regularity:     r(0.50, 0.90),
-    a3_app_attendance:       r(0.65, 0.95),
-    a4_mission_rate:         r(0.55, 0.90),
-    b1_portfolio_update:     r(0.40, 0.85),
-    b2_income_volatility:    r(0.50, 0.85),
-    b3_income_stability:     r(0.50, 0.85),
-    b4_work_completion:      r(0.40, 0.85),
-    c1_spending_pattern:     r(0.50, 0.85),
-    c2_impulse_purchase:     r(0.55, 0.90),
-    c3_grocery_purchase:     r(0.45, 0.85),
-    c4_balance_maintenance:  r(0.50, 0.85),
-    d1_exercise:             r(0.35, 0.80),
-    d2_eco_transport:        r(0.35, 0.80),
-    d3_energy_saving:        r(0.30, 0.75),
-    d4_volunteer:            r(0.20, 0.70),
+    id:                  `${userId}_${res.score_date}`,
+    userId,
+    date:                res.score_date,
+    breakdown,
+    weights:             categoryWeights,
+    featureWeights,
+    shapValues,
+    tier:                getTierByScore(totalScore),
+    quarterlyWeight:     0.70,
+    accumulativeWeight:  0.30,
+    movingAvg90dScore:   Math.round(res.cumulative_score ?? totalScore),
+    createdAt:           new Date().toISOString(),
+  };
+}
+
+// ── Mock 피처 생성 (오프라인 폴백용) ─────────────────────
+/**
+ * 타입-안전 Mock 피처 벡터.
+ * 키 = FEATURE_KEYS 상수 (백엔드 FEATURE_COLUMNS 와 동일)
+ * 이전 버그: a1_wake_time (소문자, 다른 이름) → 백엔드가 0.0으로 처리
+ * 수정 후: A1_wake_score (대문자, 정확한 이름) → 백엔드 정상 처리
+ */
+function generateMockFeatures(): FeatureVector {
+  const r = (lo: number, hi: number) => parseFloat((lo + Math.random() * (hi - lo)).toFixed(3));
+  return {
+    // fA: 생활 루틴 — 긱 워커 평균적으로 기상/수면 불규칙
+    A1_wake_score:            r(0.55, 0.90),
+    A2_sleep_score:           r(0.50, 0.85),
+    A3_checkin_score:         r(0.65, 0.95),
+    A4_mission_rate:          r(0.55, 0.90),
+    // fB: 일·소득 — 변동성 중간 수준
+    B1_portfolio_score:       r(0.40, 0.85),
+    B2_income_stability:      r(0.50, 0.85),
+    B3_income_predictability: r(0.50, 0.85),
+    B4_work_completion:       r(0.40, 0.85),
+    // fC: 소비 행동 — 충동 결제 억제 보통
+    C1_spending_regularity:   r(0.50, 0.85),
+    C2_impulse_control:       r(0.55, 0.90),
+    C3_grocery_score:         r(0.45, 0.85),
+    C4_balance_maintain:      r(0.50, 0.85),
+    // fD: ESG — 상대적으로 낮음
+    D1_health_score:          r(0.35, 0.80),
+    D2_eco_score:             r(0.35, 0.80),
+    D3_energy_score:          r(0.30, 0.75),
+    D4_volunteer_score:       r(0.20, 0.70),
   };
 }
 
@@ -181,8 +253,8 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
     error:              null,
 
     /**
-     * FastAPI /calculate 호출 → 점수 산출 + Supabase 저장
-     * features를 넘기지 않으면 Mock 피처 사용 (데모 모드)
+     * FastAPI /calculate 호출 → XGBoost 추론 + Supabase 저장
+     * features 미전달 시 Mock 피처 사용 (데모 모드)
      */
     calculateScore: async (userId, features) => {
       if (get().isCalculating) return;
@@ -190,32 +262,23 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
 
       try {
         const featInput = features ?? generateMockFeatures();
-        const response = await api.post<GodScoreCalculateResponse>(
+
+        // quarterly_base_score 는 백엔드 스키마에 없음 → 보내지 않음
+        // 서버가 Supabase에서 직접 cumulative_score 조회
+        const response = await api.post<GodScoreApiResponse>(
           '/api/v1/godscore/calculate',
-          {
-            features: featInput,
-            quarterly_base_score: get().quarterlyBaseScore,
-          },
+          { features: featInput },
         );
 
-        // 서버 가중치로 로컬 상태 업데이트
-        const newWeights: CategoryWeights = {
-          wA: response.weights.wA,
-          wB: response.weights.wB,
-          wC: response.weights.wC,
-          wD: response.weights.wD,
-        };
-
-        const snapshot = buildSnapshot(
+        const snapshot = mapCalculateToSnapshot(
           userId,
           response,
-          newWeights,
+          get().categoryWeights,
           get().featureWeights,
         );
 
         set(state => {
           state.currentSnapshot = snapshot;
-          state.categoryWeights = newWeights;
 
           // 90일 이력 유지
           const today = response.score_date;
@@ -230,6 +293,7 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
           }
           state.isCalculating = false;
         });
+
       } catch (err) {
         set(state => {
           state.error         = err instanceof Error ? err.message : '점수 계산 서버 오류';
@@ -239,17 +303,23 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
     },
 
     /**
-     * 서버 저장 최신 점수 로드
-     * 앱 재시작 시 로컬 상태 복원에 사용
+     * 서버 저장 최신 점수 로드 (앱 재시작 시 로컬 상태 복원)
+     * 실패 시 로컬 캐시 유지 — graceful degradation
      */
     loadLatestScore: async (userId) => {
       set(state => { state.isCalculating = true; state.error = null; });
       try {
-        const response = await api.get<GodScoreLatestResponse>(
+        const response = await api.get<GodScoreLatestApiResponse>(
           '/api/v1/godscore/latest',
         );
 
-        const snapshot = buildSnapshot(
+        // 점수 없음 응답 (message 필드만 있는 경우)
+        if (!response.final_score) {
+          set(state => { state.isCalculating = false; });
+          return;
+        }
+
+        const snapshot = mapLatestToSnapshot(
           userId,
           response,
           get().categoryWeights,
@@ -270,8 +340,8 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
     },
 
     /**
-     * 분기 정산: 현재 점수를 quarterlyBaseScore로 확정.
-     * 실서비스: Celery Beat 분기 1회 호출 → 서버 godscores 테이블 업데이트 후 프론트 반영.
+     * 분기 정산: 현재 점수를 quarterlyBaseScore 로 확정
+     * 실서비스: Celery Beat 분기 1회 호출
      */
     settleQuarterlyScore: () => {
       const snap = get().currentSnapshot;
@@ -303,7 +373,6 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
 
     /**
      * Mock 데이터 시딩 (오프라인 시연 / Storybook용)
-     * 서버 없이도 UI 렌더링 확인 가능하도록 로컬 상태만 구성
      */
     seedMockData: (userId) => {
       const catW  = get().categoryWeights;
@@ -311,13 +380,12 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
       const history: GodScoreSnapshot[] = [];
 
       for (let i = 6; i >= 0; i--) {
-        const date       = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+        const dateStr    = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
         const totalScore = Math.round(400 + i * 30 + Math.random() * 40);
-        const tier       = getTierByScore(totalScore);
         const snapshot: GodScoreSnapshot = {
-          id:                  `${userId}_${date}`,
+          id:                  `${userId}_${dateStr}`,
           userId,
-          date,
+          date:                dateStr,
           breakdown: {
             fA: 60 + Math.random() * 30,
             fB: 55 + Math.random() * 35,
@@ -328,7 +396,7 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
           weights:              catW,
           featureWeights:       featW,
           shapValues:           [],
-          tier,
+          tier:                 getTierByScore(totalScore),
           quarterlyWeight:      0.70,
           accumulativeWeight:   0.30,
           movingAvg90dScore:    totalScore - 10,
@@ -347,7 +415,7 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
   })),
 );
 
-// ── Selectors ────────────────────────────────────────────────────────
+// ── Selectors ─────────────────────────────────────────────
 export const selectCurrentScore     = (s: GodScoreState) =>
   s.currentSnapshot?.breakdown.totalScore ?? 0;
 export const selectCurrentTier      = (s: GodScoreState) =>

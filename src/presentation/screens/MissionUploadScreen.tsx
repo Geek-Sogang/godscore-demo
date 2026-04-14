@@ -22,9 +22,12 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMissionStore } from '../../application/stores/missionStore';
 import type { MissionFeatureId } from '../../../types/features';
 import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
+import type { MissionStackParamList } from '../navigation/AppNavigator';
 
 // ── 웹 안전 Alert ──────────────────────────────────────────────────
 function showAlert(title: string, message: string) {
@@ -303,7 +306,10 @@ function AIAnalysisCard({
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────
-export default function MissionUploadScreen({ route }: { route: any }) {
+// MissionStack에서 전달되는 route props 타입 지정
+type UploadScreenProps = NativeStackScreenProps<MissionStackParamList, 'MissionUpload'>;
+
+export default function MissionUploadScreen({ route }: UploadScreenProps) {
   const missionId = (route?.params?.missionId ?? 'A_1') as MissionFeatureId;
   const definition = MISSION_DEFINITIONS[missionId];
 
@@ -316,6 +322,8 @@ export default function MissionUploadScreen({ route }: { route: any }) {
   const [txHash, setTxHash]                      = useState<string | null>(null);
 
   const completeMission = useMissionStore(s => s.completeMission);
+  // 완료 후 미션 센터로 돌아가기 위한 네비게이션
+  const navigation = useNavigation();
 
   // 파일 업로드 시뮬레이션
   const handleUpload = useCallback(() => {
@@ -440,8 +448,18 @@ export default function MissionUploadScreen({ route }: { route: any }) {
         )}
 
         {txHash && (
-          <View className="mx-4 mt-4 bg-green-500 rounded-2xl py-4 items-center">
-            <Text className="text-white font-bold text-base">✅ 인증 완료 · 갓생점수 반영됨</Text>
+          <View className="mx-4 mt-4 gap-3">
+            <View className="bg-green-500 rounded-2xl py-4 items-center">
+              <Text className="text-white font-bold text-base">✅ 인증 완료 · 갓생점수 반영됨</Text>
+            </View>
+            {/* 완료 후 미션 센터로 돌아가기 */}
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              className="bg-white border border-gray-200 rounded-2xl py-3.5 items-center"
+              activeOpacity={0.8}
+            >
+              <Text className="text-gray-700 font-semibold text-sm">← 미션 센터로 돌아가기</Text>
+            </TouchableOpacity>
           </View>
         )}
       </ScrollView>

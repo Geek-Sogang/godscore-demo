@@ -7,6 +7,7 @@
  *   - confidence / topFeatures: Store SHAP 값에서 파생
  *   - simulateQuarterlyRetraining: useMLEngine 유지 (클라이언트 노이즈)
  */
+import type { FeatureVector } from '../../../types/featureKeys';
 import { useEffect } from 'react';
 import {
   useGodScoreStore,
@@ -36,7 +37,7 @@ export interface UseGodScoreReturn {
   // ── 가중치 (Store SSoT) ───────────────────────
   currentWeights: ReturnType<typeof useMLEngine>['currentWeights'];
   // ── 액션 ──────────────────────────────────────
-  recalculate: (features?: Record<string, number>) => void;
+  recalculate: (features?: FeatureVector) => void;
   runQuarterlyRetraining: () => void;
   error: string | null;
 }
@@ -62,7 +63,7 @@ export function useGodScore(userId: string): UseGodScoreReturn {
    * 점수 재계산
    * features 없으면 서버가 Mock 피처로 처리 (데모 모드)
    */
-  const recalculate = (features?: Record<string, number>) => {
+  const recalculate = (features?: FeatureVector) => {
     store.calculateScore(userId, features);
   };
 

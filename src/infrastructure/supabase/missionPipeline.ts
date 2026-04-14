@@ -1,26 +1,24 @@
 /**
  * src/infrastructure/supabase/missionPipeline.ts
- * 미션 데이터 파이프라인 — FastAPI 서버 연동 버전
+ * 미션 파이프라인 — 완전 로컬 Mock 구현
  *
- * 3단계 풀스택 전환:
- *   이전: 인메모리 Map 기반 Mock DB
- *   이후: FastAPI POST /api/v1/missions/complete 호출
- *         서버에서 Supabase INSERT + Keccak256 해싱 + Mock 블록체인 처리
+ * CLAUDE.md 원칙: "외부 API는 모두 Mock으로 처리 — 실제 키 없이 작동해야 함"
+ * → FastAPI 서버 호출 없이 전체 파이프라인을 로컬에서 처리
  *
- * 서버 처리 흐름 (백엔드 routers/missions.py):
- *   Step 2. SHA-256 교차 검증 (위변조 감지)
- *   Step 3. 중복 체크 + AI 생성물 판별
- *   Step 4. 정규화 점수 산출 → mission_logs INSERT
- *   Step 5. Keccak256 → blockchain_records INSERT
+ * 처리 흐름:
+ *   Step 1. rawData JSON 파싱 + 유효성 확인
+ *   Step 2. computeSHA256 클라이언트 해시 생성
+ *   Step 3. 미션별 정규화 점수 계산 (MOCK_SCORES)
+ *   Step 4. MissionLog 객체 생성
+ *   Step 5. computeKeccak256 트랜잭션 해시 생성 (블록체인 Mock)
+ *   Step 6. 로컬 캐시 갱신
  */
-import { computeSHA256 } from '../blockchain/keccak256';
-import { api } from '../api/apiClient';
+import { computeSHA256, computeKeccak256 } from '../blockchain/keccak256';
 import type { MissionLog, UserStreak } from "../../../types/mission";
 import type { CompleteMissionInput } from "../../domain/usecases/CompleteMission";
 import type { MissionFeatureId } from "../../../types/features";
 
 // ── 미션 코드 매핑 ────────────────────────────────────────
-// MissionFeatureId ("A_1") → mission_code ("A1") + mission_name
 const MISSION_META: Record<string, { code: string; category: 'A' | 'B' | 'C' | 'D'; name: string }> = {
   A_1: { code: 'A1', category: 'A', name: '기상 인증' },
   A_2: { code: 'A2', category: 'A', name: '수면 규칙성' },
@@ -40,204 +38,114 @@ const MISSION_META: Record<string, { code: string; category: 'A' | 'B' | 'C' | '
   D_4: { code: 'D4', category: 'D', name: '봉사·기부 활동' },
 };
 
-// ── 로컬 캐시 (동기 조회 인터페이스 유지용) ──────────────
-// completeMission() 성공 시 갱신되며, getMissionLogs 등 동기 메서드에서 사용
+// ── 미션별 Mock 정규화 점수 ───────────────────────────────
+// 행동경제학 연구 기반 가설값 (분기별 XGBoost 재조정 예정)
+const MOCK_SCORES: Record<string, number> = {
+  A_1: 0.90, A_2: 0.82, A_3: 0.95, A_4: 0.78,
+  B_1: 0.85, B_2: 0.75, B_3: 0.80, B_4: 0.88,
+  C_1: 0.72, C_2: 0.70, C_3: 0.83, C_4: 0.76,
+  D_1: 0.87, D_2: 0.79, D_3: 0.74, D_4: 0.91,
+};
+
+// ── 로컬 캐시 ─────────────────────────────────────────────
 const _cachedMissionLogs: Map<string, MissionLog[]> = new Map();
-const _cachedPointBalance: Map<string, number>     = new Map();
-const _cachedStreak: Map<string, UserStreak>        = new Map();
+const _cachedPointBalance: Map<string, number>      = new Map();
+const _cachedStreak: Map<string, UserStreak>         = new Map();
 
-// ── FastAPI 응답 타입 ─────────────────────────────────────
-interface CompleteMissionApiResponse {
-  success: boolean;
-  mission_log_id: string;
-  server_hash: string;
-  tx_hash: string;
-  normalized_score: number;
-  points_earned: number;
-  ai_verified: boolean | null;
-  message: string;
-}
-
-// ── 파이프라인 실행 ───────────────────────────────────────
+// ── 파이프라인 실행 (완전 로컬 처리) ─────────────────────
 
 /**
- * 전체 미션 완료 파이프라인 실행
+ * 미션 완료 파이프라인 — 서버 없이 로컬에서 전체 처리
  *
- * 클라이언트 책임:
- *   1. rawData JSON 직렬화
- *   2. SHA-256 클라이언트 해시 계산 → 서버 교차 검증용
- *
- * 서버 책임 (FastAPI):
- *   3. 중복/AI 검증, 4. 점수 산출, 5. Keccak256 + 블록체인 기록
+ * 실제 서버 연동 시 이 함수만 교체하면 됨 (DIP 원칙)
  */
 export async function runMissionPipeline(
   input: CompleteMissionInput,
 ): Promise<{ missionLog: MissionLog; txHash: string; verified: boolean }> {
 
-  // 미션 메타 정보 조회
+  // Step 1. 미션 메타 확인
   const meta = MISSION_META[input.missionId];
   if (!meta) {
     throw new Error(`[Pipeline] 알 수 없는 미션 ID: ${input.missionId}`);
   }
 
-  // raw_data: rawDataSerialized 역직렬화 (string → object)
-  let rawData: Record<string, unknown>;
-  try {
-    rawData = JSON.parse(input.rawDataSerialized);
-  } catch {
-    // 직렬화 불가 데이터는 단순 래핑
-    rawData = { raw: input.rawDataSerialized };
-  }
-
-  // 클라이언트 SHA-256 해시 생성 (위변조 감지용)
+  // Step 2. 클라이언트 SHA-256 해시 (위변조 감지용 — 서버 연동 시 교차 검증)
   const clientHash = computeSHA256(input.rawDataSerialized);
 
-  // FastAPI POST /api/v1/missions/complete 호출
-  const response = await api.post<CompleteMissionApiResponse>(
-    '/api/v1/missions/complete',
-    {
-      category:     meta.category,        // "A" | "B" | "C" | "D"
-      mission_code: meta.code,            // "A1" ~ "D4"
-      mission_name: meta.name,            // 한국어 미션명
-      raw_data:     rawData,              // 역직렬화된 원시 데이터
-      client_hash:  clientHash,           // SHA-256 교차 검증용
-      completed_at: new Date().toISOString(),
-    },
-  );
+  // Step 3. 미션별 정규화 점수 (Mock)
+  const normalizedScore = MOCK_SCORES[input.missionId] ?? 0.80;
 
-  if (!response.success) {
-    throw new Error(`[Pipeline] 서버 처리 실패: ${response.message}`);
-  }
+  // Step 4. 블록체인 트랜잭션 해시 생성 (keccak256 로컬 계산)
+  //         실제: 스마트 컨트랙트 onchain 기록 후 tx_hash 반환
+  const ts      = Date.now().toString(16);
+  const logId   = `log_${meta.code}_${ts}`;
+  const txHash  = computeKeccak256(`${clientHash}:${input.missionId}:${ts}`);
 
-  // MissionLog 객체 구성 (서버 응답 → 클라이언트 타입 변환)
+  // Step 5. MissionLog 구성
   const now = new Date().toISOString();
   const missionLog: MissionLog = {
-    id:                 response.mission_log_id,
-    userId:             input.userId,
-    missionId:          input.missionId as MissionFeatureId,
-    status:             'VERIFIED',
-    completedAt:        now,
-    rawDataHash:        clientHash,
-    utcTimestamp:       now,
-    aiVerificationScore: response.ai_verified !== null
-      ? (response.ai_verified ? 0.1 : 0.9)   // 검증됨=낮은 AI점수, 의심=높은 AI점수
-      : null,
-    aiGeneratedFlag:    response.ai_verified === false,
-    pointsEarned:       response.points_earned,
-    blockchainRecorded: true,
-    txHash:             response.tx_hash,
-    createdAt:          now,
+    id:                  logId,
+    userId:              input.userId,
+    missionId:           input.missionId as MissionFeatureId,
+    status:              'VERIFIED',
+    completedAt:         now,
+    rawDataHash:         clientHash,
+    utcTimestamp:        now,
+    aiVerificationScore: input.aiVerificationScore ?? null,
+    aiGeneratedFlag:     input.aiGeneratedFlag ?? false,
+    pointsEarned:        input.pointsEarned,
+    blockchainRecorded:  true,
+    txHash:              txHash,
+    createdAt:           now,
   };
 
-  // 로컬 캐시 갱신
-  const userId = input.userId;
-  const existing = _cachedMissionLogs.get(userId) ?? [];
-  _cachedMissionLogs.set(userId, [...existing, missionLog]);
+  // Step 6. 로컬 캐시 갱신
+  const existing = _cachedMissionLogs.get(input.userId) ?? [];
+  _cachedMissionLogs.set(input.userId, [...existing, missionLog]);
   _cachedPointBalance.set(
-    userId,
-    (_cachedPointBalance.get(userId) ?? 0) + response.points_earned,
+    input.userId,
+    (_cachedPointBalance.get(input.userId) ?? 0) + input.pointsEarned,
   );
 
-  return {
-    missionLog,
-    txHash:   response.tx_hash,
-    verified: true,
-  };
+  console.log(
+    `[Pipeline ✅] ${input.missionId} 완료`,
+    `score=${normalizedScore}`,
+    `txHash=${txHash.slice(0, 12)}...`,
+  );
+
+  return { missionLog, txHash, verified: true };
 }
 
 // ── 조회 함수 (동기 캐시 기반) ────────────────────────────
 
-/** 사용자 미션 로그 조회 (캐시 기반) */
+/** 사용자 미션 로그 조회 */
 export function getMissionLogsByUser(userId: string): MissionLog[] {
   return _cachedMissionLogs.get(userId) ?? [];
 }
 
-/** 포인트 잔액 조회 (캐시 기반) */
+/** 포인트 잔액 조회 */
 export function getPointBalance(userId: string): number {
   return _cachedPointBalance.get(userId) ?? 0;
 }
 
-/** 스트릭 정보 조회 (캐시 기반) */
+/** 스트릭 정보 조회 */
 export function getUserStreak(userId: string): UserStreak | undefined {
   return _cachedStreak.get(userId);
 }
 
-// ── 서버 데이터 비동기 동기화 ────────────────────────────
+// ── 서버 동기화 (서버 연동 시 구현 예정) ────────────────
 
-/** 서버에서 스트릭 정보를 가져와 캐시 갱신 */
+/** 서버 스트릭 동기화 — 현재는 캐시 반환만 */
 export async function syncStreakFromServer(userId: string): Promise<UserStreak | null> {
-  try {
-    const data = await api.get<{
-      streak_count: number;
-      point_balance: number;
-      last_checkin_at: string | null;
-      next_bonus_milestone: number | null;
-      days_to_next_bonus: number | null;
-    }>('/api/v1/missions/streak');
-
-    const streak: UserStreak = {
-      userId,
-      currentStreak:   data.streak_count,
-      longestStreak:   data.streak_count,    // 서버 별도 필드 없으면 동일
-      lastCheckInDate: data.last_checkin_at
-        ? data.last_checkin_at.slice(0, 10)
-        : new Date().toISOString().slice(0, 10),
-      bonusMilestones: [7, 30, 100],
-      daysToNextBonus: data.days_to_next_bonus ?? 7,
-    };
-
-    _cachedStreak.set(userId, streak);
-    _cachedPointBalance.set(userId, data.point_balance);
-    return streak;
-  } catch {
-    // 서버 오류 시 캐시 유지
-    return _cachedStreak.get(userId) ?? null;
-  }
+  return _cachedStreak.get(userId) ?? null;
 }
 
-/** 서버에서 오늘 미션 로그를 가져와 캐시 갱신 */
-export async function syncTodayMissionsFromServer(userId: string): Promise<void> {
-  try {
-    const data = await api.get<{
-      date: string;
-      completed_missions: Array<{
-        mission_code: string;
-        mission_name: string;
-        category: string;
-        normalized_score: number;
-        on_chain: boolean;
-        completed_at: string;
-      }>;
-      count: number;
-    }>('/api/v1/missions/today');
-
-    const logs: MissionLog[] = data.completed_missions.map(m => {
-      // mission_code "A1" → MissionFeatureId "A_1" 역변환
-      const missionId = `${m.mission_code[0]}_${m.mission_code[1]}` as MissionFeatureId;
-      return {
-        id:                  `${userId}_${m.mission_code}_${m.completed_at}`,
-        userId,
-        missionId,
-        status:              m.on_chain ? 'VERIFIED' : 'COMPLETED',
-        completedAt:         m.completed_at,
-        rawDataHash:         '',
-        utcTimestamp:        m.completed_at,
-        aiVerificationScore: null,
-        aiGeneratedFlag:     false,
-        pointsEarned:        Math.round(m.normalized_score * 100),
-        blockchainRecorded:  m.on_chain,
-        txHash:              null,
-        createdAt:           m.completed_at,
-      };
-    });
-
-    _cachedMissionLogs.set(userId, logs);
-  } catch {
-    // 서버 오류 시 캐시 유지
-  }
+/** 서버 오늘 미션 동기화 — 현재는 캐시 반환만 */
+export async function syncTodayMissionsFromServer(_userId: string): Promise<void> {
+  // 서버 연동 전: no-op
 }
 
-/** Mock DB 전체 초기화 (테스트용) */
+/** 테스트용 전체 초기화 */
 export function resetMockDB(): void {
   _cachedMissionLogs.clear();
   _cachedPointBalance.clear();

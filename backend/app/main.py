@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
-from app.routers import missions, godscore
+from app.routers import missions, godscore, finance
+from app.middleware.rate_limit import RateLimitMiddleware
 
 settings = get_settings()
 
@@ -34,6 +35,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate Limiting 미들웨어 (CORS 보다 먼저 등록)
+app.add_middleware(RateLimitMiddleware)
+
 # CORS 미들웨어 (Expo Web 8081, Expo Go 19006 허용)
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +50,7 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(missions.router, prefix="/api/v1/missions", tags=["미션"])
 app.include_router(godscore.router, prefix="/api/v1/godscore", tags=["갓생스코어"])
+app.include_router(finance.router, prefix="/api/v1/finance", tags=["금융혜택"])
 
 
 @app.get("/", tags=["헬스체크"])
