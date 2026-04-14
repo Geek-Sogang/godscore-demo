@@ -11,7 +11,7 @@
  *  - "하나은행 신용대출 바로가기" CTA 버튼
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -65,18 +65,30 @@ function RateComparisonCard({
   tierLabel: string;
 }) {
   const barAnim = useRef(new Animated.Value(0)).current;
+  const [barWidthPct, setBarWidthPct] = useState(100);
 
   useEffect(() => {
-    Animated.timing(barAnim, {
-      toValue: 1,
-      duration: 1000,
-      delay: 300,
-      useNativeDriver: false,
-    }).start();
+    const discountRatio = discount / baseRate;
+    const targetPct = Math.round((1 - discountRatio) * 100);
+    if (Platform.OS === 'web') {
+      // 웹: Animated string 보간 미지원 → setTimeout으로 CSS transition 대체
+      const timer = setTimeout(() => setBarWidthPct(targetPct), 400);
+      return () => clearTimeout(timer);
+    } else {
+      Animated.timing(barAnim, {
+        toValue: 1,
+        duration: 1000,
+        delay: 300,
+        useNativeDriver: false,
+      }).start();
+    }
   }, []);
 
   const discountPct = discount / baseRate;
-  const barWidth    = barAnim.interpolate({ inputRange: [0, 1], outputRange: ['100%', `${Math.round((1 - discountPct) * 100)}%`] });
+  const nativeBarWidth = barAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['100%', `${Math.round((1 - discountPct) * 100)}%`],
+  });
 
   return (
     <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
@@ -127,12 +139,21 @@ function RateComparisonCard({
             <Text className="text-sm font-black text-green-600">{finalRate}%</Text>
           </View>
           <View className="h-10 bg-green-50 rounded-xl overflow-hidden border border-green-100">
-            <Animated.View
-              className="h-full bg-green-500 rounded-xl items-center justify-center"
-              style={{ width: barWidth }}
-            >
-              <Text className="text-white text-sm font-black">{finalRate}% 최종</Text>
-            </Animated.View>
+            {Platform.OS === 'web' ? (
+              <View
+                className="h-full bg-green-500 rounded-xl items-center justify-center"
+                style={{ width: `${barWidthPct}%`, transition: 'width 1s ease-out' } as any}
+              >
+                <Text className="text-white text-sm font-black">{finalRate}% 최종</Text>
+              </View>
+            ) : (
+              <Animated.View
+                className="h-full bg-green-500 rounded-xl items-center justify-center"
+                style={{ width: nativeBarWidth }}
+              >
+                <Text className="text-white text-sm font-black">{finalRate}% 최종</Text>
+              </Animated.View>
+            )}
           </View>
         </View>
 
@@ -192,8 +213,8 @@ function SHAPContributionCard({ shapValues }: { shapValues: any[] }) {
 
       <View className="p-5 gap-3">
         {top5.map((shap, idx) => {
-          const isPositive = shap.value >= 0;
-          const barPct     = Math.abs(shap.value) / maxAbs;
+          const isPositive = shap.shapValue >= 0;
+          const barPct     = Math.abs(shap.shapValue) / maxAbs;
           const emoji      = FEATURE_EMOJI[shap.featureId] ?? '📊';
           return (
             <View key={shap.featureId}>
@@ -205,7 +226,7 @@ function SHAPContributionCard({ shapValues }: { shapValues: any[] }) {
                 </Text>
                 <View className={`px-2 py-0.5 rounded-full ${isPositive ? 'bg-green-100' : 'bg-red-100'}`}>
                   <Text className={`text-xs font-black ${isPositive ? 'text-green-700' : 'text-red-600'}`}>
-                    {isPositive ? '+' : ''}{shap.value.toFixed(2)}
+                    {isPositive ? '+' : ''}{shap.shapValue.toFixed(2)}
                   </Text>
                 </View>
               </View>
