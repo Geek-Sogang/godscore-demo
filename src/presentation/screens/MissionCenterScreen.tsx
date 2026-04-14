@@ -1,12 +1,17 @@
 // Figma 매칭: [미션 센터 — MissionCenterScreen]
 /**
- * MissionCenterScreen.tsx
- * Step 2: 4대 피처 미션 센터
+ * MissionCenterScreen.tsx — Step 2 미션 센터
+ *
+ * 수정 이력:
+ *  - processingMissionIds (Set) → processingMissionId (단일값) 통일
+ *  - loadAndRefreshAll → loadDailyMissions 호출로 변경 (SSoT)
+ *  - 웹 호환: Platform.OS='web' 시 Alert 대신 console + 상태 표시
  *
  * 구성:
- *  - 상단: 탭 형태 4대 카테고리 (생활 루틴 / 일·소득 / 소비 행동 / 개인 ESG)
- *  - 탭별: 카테고리 헤더(이모지 + 컬러 + 진행률) + 세부 미션 카드 리스트
- *  - 미션 카드: 아이콘 + 설명 + 상태 + 완료 버튼 + txHash 표시
+ *  - 상단 4탭 카테고리 (생활 루틴 / 일·소득 / 소비 행동 / 개인 ESG)
+ *  - 탭별: 카테고리 헤더(진행률) + 미션 카드 리스트
+ *  - 미션 카드: 이모지 + 이름 + 설명 + 리워드 + 완료 버튼 + txHash
+ *  - 하단: 전체 카테고리 진행률 요약
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -17,12 +22,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMissionStore } from '../../application/stores/missionStore';
 import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
+import type { MissionFeatureId } from '../../../types/features';
 
-// ── 미션 ID → 이모지 매핑 ─────────────────────────────────────────
+// ── 미션 ID → 이모지 ─────────────────────────────────────────────
 const MISSION_EMOJI: Record<string, string> = {
   A_1: '⏰', A_2: '😴', A_3: '📅', A_4: '✅',
   B_1: '💼', B_2: '💵', B_3: '📈', B_4: '⭐',
@@ -30,9 +37,7 @@ const MISSION_EMOJI: Record<string, string> = {
   D_1: '🏃', D_2: '🚌', D_3: '⚡', D_4: '🤝',
 };
 
-import type { MissionFeatureId } from '../../../types/features';
-
-// ── 상수 ──────────────────────────────────────────────────────────
+// ── 상수 ────────────────────────────────────────────────────────────
 const MOCK_USER_ID = 'user_001';
 
 interface CategoryMeta {
@@ -41,8 +46,6 @@ interface CategoryMeta {
   emoji: string;
   description: string;
   tabBg: string;
-  headerBg: string;
-  headerText: string;
   progressColor: string;
   chipBg: string;
   chipText: string;
@@ -51,60 +54,28 @@ interface CategoryMeta {
 
 const CATEGORIES: CategoryMeta[] = [
   {
-    id: 'A',
-    label: '생활 루틴',
-    emoji: '🌅',
-    description: '자기통제력 · 지속성',
-    tabBg: 'bg-amber-500',
-    headerBg: 'bg-gradient-to-r from-amber-400 to-orange-400',
-    headerText: 'text-white',
-    progressColor: 'bg-amber-400',
-    chipBg: 'bg-amber-50',
-    chipText: 'text-amber-700',
-    btnBg: 'bg-amber-500',
+    id: 'A', label: '생활 루틴', emoji: '🌅', description: '자기통제력 · 지속성',
+    tabBg: 'bg-amber-500', progressColor: 'bg-amber-400',
+    chipBg: 'bg-amber-50', chipText: 'text-amber-700', btnBg: 'bg-amber-500',
   },
   {
-    id: 'B',
-    label: '일·소득',
-    emoji: '💼',
-    description: '소득지속가능성 · 미래지향성',
-    tabBg: 'bg-blue-500',
-    headerBg: 'bg-gradient-to-r from-blue-500 to-cyan-400',
-    headerText: 'text-white',
-    progressColor: 'bg-blue-400',
-    chipBg: 'bg-blue-50',
-    chipText: 'text-blue-700',
-    btnBg: 'bg-blue-500',
+    id: 'B', label: '일·소득', emoji: '💼', description: '소득지속가능성 · 미래지향성',
+    tabBg: 'bg-blue-500', progressColor: 'bg-blue-400',
+    chipBg: 'bg-blue-50', chipText: 'text-blue-700', btnBg: 'bg-blue-500',
   },
   {
-    id: 'C',
-    label: '소비 행동',
-    emoji: '💳',
-    description: '충동성 · 소비통제력',
-    tabBg: 'bg-slate-500',
-    headerBg: 'bg-gradient-to-r from-slate-500 to-gray-500',
-    headerText: 'text-white',
-    progressColor: 'bg-slate-400',
-    chipBg: 'bg-slate-50',
-    chipText: 'text-slate-700',
-    btnBg: 'bg-slate-600',
+    id: 'C', label: '소비 행동', emoji: '💳', description: '충동성 · 소비통제력',
+    tabBg: 'bg-slate-500', progressColor: 'bg-slate-400',
+    chipBg: 'bg-slate-50', chipText: 'text-slate-700', btnBg: 'bg-slate-600',
   },
   {
-    id: 'D',
-    label: '개인 ESG',
-    emoji: '🌿',
-    description: 'ESG 금융 통합 스코어',
-    tabBg: 'bg-green-500',
-    headerBg: 'bg-gradient-to-r from-green-500 to-emerald-400',
-    headerText: 'text-white',
-    progressColor: 'bg-green-400',
-    chipBg: 'bg-green-50',
-    chipText: 'text-green-700',
-    btnBg: 'bg-green-500',
+    id: 'D', label: '개인 ESG', emoji: '🌿', description: 'ESG 금융 통합 스코어',
+    tabBg: 'bg-green-500', progressColor: 'bg-green-400',
+    chipBg: 'bg-green-50', chipText: 'text-green-700', btnBg: 'bg-green-500',
   },
 ];
 
-// ── 탭 버튼 ────────────────────────────────────────────────────────
+// ── 탭 버튼 ─────────────────────────────────────────────────────────
 function CategoryTab({
   meta,
   isActive,
@@ -130,7 +101,7 @@ function CategoryTab({
   );
 }
 
-// ── 카테고리 헤더 카드 ─────────────────────────────────────────────
+// ── 카테고리 헤더 카드 ───────────────────────────────────────────────
 function CategoryHeader({
   meta,
   completedCount,
@@ -140,26 +111,31 @@ function CategoryHeader({
   completedCount: number;
   totalCount: number;
 }) {
-  const progress = totalCount > 0 ? completedCount / totalCount : 0;
-  const progressPct = Math.round(progress * 100);
+  const progressPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
-    <View className="mx-4 mt-4 rounded-3xl overflow-hidden bg-white border border-gray-100 shadow-sm">
+    <View className="mx-4 mt-4 rounded-3xl overflow-hidden bg-white border border-gray-100"
+      style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 4 }}>
       {/* 색상 헤더 */}
       <View className={`px-5 py-4 ${meta.tabBg}`}>
         <View className="flex-row items-center justify-between">
           <View className="flex-row items-center gap-3">
-            <View className="w-12 h-12 bg-white/20 rounded-2xl items-center justify-center">
+            <View className="w-12 h-12 rounded-2xl items-center justify-center"
+              style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
               <Text className="text-2xl">{meta.emoji}</Text>
             </View>
             <View>
               <Text className="text-white text-lg font-black">{meta.label}</Text>
-              <Text className="text-white/70 text-xs mt-0.5">{meta.description}</Text>
+              <Text className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                {meta.description}
+              </Text>
             </View>
           </View>
           <View className="items-end">
             <Text className="text-white text-3xl font-black">{completedCount}</Text>
-            <Text className="text-white/70 text-xs">/ {totalCount} 완료</Text>
+            <Text className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>
+              / {totalCount} 완료
+            </Text>
           </View>
         </View>
       </View>
@@ -177,7 +153,7 @@ function CategoryHeader({
         </View>
         <Text className="text-xs text-gray-400 mt-1.5">
           {completedCount === totalCount
-            ? '🎉 이 카테고리 모든 미션 완료!' 
+            ? '🎉 이 카테고리 모든 미션 완료!'
             : `${totalCount - completedCount}개 미션이 남아있어요`}
         </Text>
       </View>
@@ -185,7 +161,7 @@ function CategoryHeader({
   );
 }
 
-// ── 미션 카드 ──────────────────────────────────────────────────────
+// ── 미션 카드 ────────────────────────────────────────────────────────
 function MissionCard({
   missionId,
   definition,
@@ -204,15 +180,19 @@ function MissionCard({
   onComplete: (id: MissionFeatureId) => void;
 }) {
   return (
-    <View className={`mx-4 mb-3 rounded-2xl border overflow-hidden ${
-      isCompleted ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
-    }`}>
+    <View
+      className={`mx-4 mb-3 rounded-2xl border overflow-hidden ${
+        isCompleted ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
+      }`}
+    >
       <View className="p-4">
         {/* 미션 헤더 */}
         <View className="flex-row items-start gap-3">
-          <View className={`w-11 h-11 rounded-xl items-center justify-center ${
-            isCompleted ? 'bg-green-100' : meta.chipBg
-          }`}>
+          <View
+            className={`w-11 h-11 rounded-xl items-center justify-center ${
+              isCompleted ? 'bg-green-100' : meta.chipBg
+            }`}
+          >
             <Text className="text-xl">{MISSION_EMOJI[missionId] ?? '⚡'}</Text>
           </View>
           <View className="flex-1">
@@ -237,14 +217,16 @@ function MissionCard({
           </View>
         </View>
 
-        {/* 블록체인 해시 (완료된 경우) */}
+        {/* 블록체인 해시 */}
         {isCompleted && txHash && (
-          <View className="mt-3 bg-gray-800 rounded-xl p-2.5">
+          <View className="mt-3 rounded-xl p-2.5" style={{ backgroundColor: '#1F2937' }}>
             <View className="flex-row items-center gap-1.5 mb-1">
               <Text className="text-xs">⛓️</Text>
-              <Text className="text-xs font-semibold text-green-400">블록체인 기록 완료</Text>
+              <Text className="text-xs font-semibold" style={{ color: '#34D399' }}>
+                블록체인 기록 완료
+              </Text>
             </View>
-            <Text className="text-gray-400 text-xs font-mono" numberOfLines={1}>
+            <Text className="text-xs font-mono" style={{ color: '#9CA3AF' }} numberOfLines={1}>
               {txHash.slice(0, 20)}...{txHash.slice(-8)}
             </Text>
           </View>
@@ -275,28 +257,39 @@ function MissionCard({
   );
 }
 
-// ── 메인 컴포넌트 ─────────────────────────────────────────────────
+// ── 웹 안전 Alert ────────────────────────────────────────────────────
+function showAlert(title: string, message: string) {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+// ── 메인 컴포넌트 ────────────────────────────────────────────────────
 export default function MissionCenterScreen() {
   const [activeTab, setActiveTab] = useState<'A' | 'B' | 'C' | 'D'>('A');
-  const [txHashes, setTxHashes] = useState<Record<string, string>>({});
+  const [txHashes, setTxHashes]   = useState<Record<string, string>>({});
 
-  const dailyStatus     = useMissionStore(s => s.dailyStatus);
-  const processingIds   = useMissionStore(s => s.processingMissionIds);
-  const completeMission = useMissionStore(s => s.completeMission);
-  const loadAndRefresh  = useMissionStore(s => s.loadAndRefreshAll);
+  // ── [수정] processingMissionId (단일값) ──────────────────────────
+  const dailyStatus        = useMissionStore(s => s.dailyStatus);
+  const processingMissionId = useMissionStore(s => s.processingMissionId);
+  const completeMission    = useMissionStore(s => s.completeMission);
+  // ── [수정] loadDailyMissions (SSoT) ─────────────────────────────
+  const loadDailyMissions  = useMissionStore(s => s.loadDailyMissions);
 
   useEffect(() => {
-    loadAndRefresh(MOCK_USER_ID);
+    loadDailyMissions(MOCK_USER_ID);
   }, []);
 
-  // 탭 카테고리의 미션 목록 필터링
   const currentMeta = CATEGORIES.find(c => c.id === activeTab)!;
+
   const categoryMissions = Object.entries(MISSION_DEFINITIONS).filter(
     ([id]) => id.startsWith(activeTab + '_')
   ) as [MissionFeatureId, typeof MISSION_DEFINITIONS[MissionFeatureId]][];
 
   const completedInCategory = categoryMissions.filter(
-    ([id]) => dailyStatus?.missions[id as import('../../../types/features').MissionFeatureId] === true
+    ([id]) => dailyStatus?.missions[id] === true
   ).length;
 
   const handleComplete = useCallback(
@@ -309,16 +302,19 @@ export default function MissionCenterScreen() {
           Math.random() * 40 + 60,
         );
         setTxHashes(prev => ({ ...prev, [missionId]: result.txHash }));
-        Alert.alert('🎉 미션 완료!', `블록체인에 기록되었습니다.\n+50 코인 획득!`);
-      } catch (err) {
-        Alert.alert('오류', '미션 처리 중 문제가 발생했습니다.');
+        showAlert('🎉 미션 완료!', `블록체인에 기록되었습니다.\n+50 코인 획득!`);
+      } catch {
+        showAlert('오류', '미션 처리 중 문제가 발생했습니다.');
       }
     },
-    [completeMission]
+    [completeMission],
   );
 
   return (
-    <SafeAreaView className="flex-1 bg-hana-lightgray" edges={['top']}>
+    <SafeAreaView
+      className="flex-1 bg-hana-lightgray"
+      edges={Platform.OS === 'web' ? [] : ['top']}
+    >
       {/* ── 헤더 ── */}
       <View className="px-5 pt-4 pb-3 bg-white border-b border-gray-100">
         <Text className="text-xl font-black text-gray-800">⚡ 미션 센터</Text>
@@ -354,7 +350,8 @@ export default function MissionCenterScreen() {
         <View className="mt-3">
           {categoryMissions.map(([missionId, def]) => {
             const isCompleted  = dailyStatus?.missions[missionId] === true;
-            const isProcessing = processingIds.has(missionId);
+            // [수정] processingMissionId === missionId (단일값 비교)
+            const isProcessing = processingMissionId === missionId;
             return (
               <MissionCard
                 key={missionId}
@@ -370,13 +367,13 @@ export default function MissionCenterScreen() {
           })}
         </View>
 
-        {/* ── 전체 진행률 요약 ── */}
+        {/* ── 전체 카테고리 진행률 요약 ── */}
         <View className="mx-4 mt-2 mb-2 bg-white rounded-2xl border border-gray-100 p-4">
           <Text className="text-sm font-bold text-gray-700 mb-3">📊 전체 카테고리 진행률</Text>
           {CATEGORIES.map(cat => {
             const missions = Object.keys(MISSION_DEFINITIONS).filter(id => id.startsWith(cat.id + '_'));
-            const done = missions.filter(id => dailyStatus?.missions[id as import('../../../types/features').MissionFeatureId] === true).length;
-            const pct = missions.length > 0 ? Math.round((done / missions.length) * 100) : 0;
+            const done = missions.filter(id => dailyStatus?.missions[id as MissionFeatureId] === true).length;
+            const pct  = missions.length > 0 ? Math.round((done / missions.length) * 100) : 0;
             return (
               <View key={cat.id} className="mb-2.5">
                 <View className="flex-row items-center justify-between mb-1">
@@ -387,7 +384,10 @@ export default function MissionCenterScreen() {
                   <Text className="text-xs font-bold text-gray-500">{done}/{missions.length}</Text>
                 </View>
                 <View className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <View className={`h-full ${cat.progressColor} rounded-full`} style={{ width: `${pct}%` }} />
+                  <View
+                    className={`h-full ${cat.progressColor} rounded-full`}
+                    style={{ width: `${pct}%` }}
+                  />
                 </View>
               </View>
             );

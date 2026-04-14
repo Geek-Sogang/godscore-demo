@@ -5,7 +5,7 @@
  *          → IMissionRepository 인터페이스 통해 주입
  * [수정 2] 리렌더 배칭: loadDailyMissions + refreshPointBalance + refreshStreak
  *          → 단일 set() 블록으로 통합 (3회 → 1회 리렌더)
- * [수정 3] Race Condition 가드: processingMissionIds Set으로 중복 요청 차단
+ * [수정 3] Race Condition 가드: processingMissionId(단일값)으로 중복 요청 차단
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -21,8 +21,8 @@ interface MissionState {
   completedLogs: MissionLog[];
   pointBalance: number;
   streak: UserStreak | null;
-  /** [수정 3] Set으로 교체: 여러 미션 동시 처리 중 상태 추적 */
-  processingMissionIds: Set<MissionFeatureId>;
+  /** [수정 3] 단일 미션 처리 중 ID (null = 처리 없음) */
+  processingMissionId: MissionFeatureId | null;
   error: string | null;
 }
 
@@ -32,9 +32,9 @@ interface MissionActions {
    * [수정 2] 단일 set() 트랜잭션: 미션 목록 + 포인트 + 스트릭 일괄 갱신
    * 기존 3회 set() → 1회로 통합 → 리렌더 1회만 발생
    */
-  loadAndRefreshAll: (userId: string) => void;
-  /** 하위 호환 별칭 */
   loadDailyMissions: (userId: string) => void;
+  /** 하위 호환 별칭 */
+  loadAndRefreshAll: (userId: string) => void;
   completeMission: (
     userId: string,
     missionId: MissionFeatureId,
@@ -53,18 +53,16 @@ export const useMissionStore = create<MissionState & MissionActions>()(
     let _repo: IMissionRepository = missionRepository;
 
     return {
-      dailyStatus:          null,
-      completedLogs:        [],
-      pointBalance:         0,
-      streak:               null,
-      processingMissionIds: new Set(),
-      error:                null,
+      dailyStatus:         null,
+      completedLogs:       [],
+      pointBalance:        0,
+      streak:              null,
+      processingMissionId: null,
+      error:               null,
 
       // ── [수정 2] 단일 set() 트랜잭션 ──────────────────────────────
-      loadAndRefreshAll: (userId) => {
+      loadDailyMissions: (userId) => {
         const today      = new Date().toISOString().slice(0, 10);
-        // TODO(Supabase 연동 시): getDailyMissions() → supabase.from('missions').select()
-        //   where is_daily=true AND is_active=true 로 교체
         const dailyDefs  = getDailyMissions();
         const completed  = get().completedLogs;
         const balance    = _repo.getPointBalance(userId);
@@ -73,11 +71,10 @@ export const useMissionStore = create<MissionState & MissionActions>()(
         // missions: Record<MissionFeatureId, boolean> — 완료 여부 맵
         const missionsMap = Object.fromEntries(
           dailyDefs.map(def => [def.id, completed.some(l => l.missionId === def.id)])
-        ) as Partial<Record<import('../../../types/features').MissionFeatureId, boolean>>;
+        ) as Partial<Record<MissionFeatureId, boolean>>;
         const completedCount = Object.values(missionsMap).filter(Boolean).length;
 
         set(state => {
-          // 포인트 + 스트릭 + 미션 목록 → 단일 set() 블록
           state.pointBalance = balance;
           state.streak       = streak;
           state.dailyStatus  = {
@@ -92,17 +89,18 @@ export const useMissionStore = create<MissionState & MissionActions>()(
         });
       },
 
-      loadDailyMissions: (userId) => get().loadAndRefreshAll(userId),
+      // 하위 호환 별칭
+      loadAndRefreshAll: (userId) => get().loadDailyMissions(userId),
 
-      // ── [수정 3] Race Condition 가드 ───────────────────────────────
+      // ── [수정 3] Race Condition 가드 (단일 processingMissionId) ────
       completeMission: async (userId, missionId, rawData, aiScore) => {
-        // 이미 처리 중인 미션이면 즉시 차단
-        if (get().processingMissionIds.has(missionId)) {
-          throw new Error(`[MissionStore] 이미 처리 중: ${missionId}`);
+        // 이미 처리 중인 미션이 있으면 즉시 차단
+        if (get().processingMissionId !== null) {
+          throw new Error(`[MissionStore] 이미 처리 중: ${get().processingMissionId}`);
         }
 
         set(state => {
-          state.processingMissionIds.add(missionId);
+          state.processingMissionId = missionId;
           state.error = null;
         });
 
@@ -126,14 +124,14 @@ export const useMissionStore = create<MissionState & MissionActions>()(
           const dailyDefs  = getDailyMissions();
           const missionsRecord = Object.fromEntries(
             dailyDefs.map(def => [def.id, newCompleted.some(l => l.missionId === def.id)])
-          ) as Partial<Record<import('../../../types/features').MissionFeatureId, boolean>>;
+          ) as Partial<Record<MissionFeatureId, boolean>>;
           const completedCount = Object.values(missionsRecord).filter(Boolean).length;
 
           set(state => {
             state.completedLogs.push(result.missionLog);
-            state.pointBalance = balance;
-            state.streak       = streak;
-            state.processingMissionIds.delete(missionId);
+            state.pointBalance        = balance;
+            state.streak              = streak;
+            state.processingMissionId = null;
             state.dailyStatus  = {
               userId, date: today, missions: missionsRecord,
               completedCount,
@@ -146,8 +144,8 @@ export const useMissionStore = create<MissionState & MissionActions>()(
           return { txHash: result.txHash, verified: result.verified };
         } catch (err) {
           set(state => {
-            state.error = err instanceof Error ? err.message : '미션 처리 오류';
-            state.processingMissionIds.delete(missionId);
+            state.error               = err instanceof Error ? err.message : '미션 처리 오류';
+            state.processingMissionId = null;
           });
           throw err;
         }
@@ -168,7 +166,7 @@ export const selectIsMissionCompleted = (missionId: MissionFeatureId) =>
   (s: MissionState) =>
     s.completedLogs.some(l => l.missionId === missionId);
 
-/** [수정 3] Set 기반 처리 중 여부 */
+/** [수정 3] 단일 processingMissionId 기반 처리 중 여부 */
 export const selectIsProcessing = (missionId: MissionFeatureId) =>
   (s: MissionState) =>
-    s.processingMissionIds.has(missionId);
+    s.processingMissionId === missionId;

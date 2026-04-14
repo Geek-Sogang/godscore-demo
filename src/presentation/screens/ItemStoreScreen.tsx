@@ -17,9 +17,22 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMissionStore } from '../../application/stores/missionStore';
+
+// ── 웹 안전 Alert ──────────────────────────────────────────────────
+function showAlert(title: string, message: string) {
+  if (Platform.OS === 'web') {
+    // eslint-disable-next-line no-alert
+    window.alert(`${title}\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+
 
 // ── 아이템 데이터 ──────────────────────────────────────────────────
 interface StoreItem {
@@ -77,7 +90,7 @@ function WorkspacePreview({ ownedItems }: { ownedItems: Set<string> }) {
   return (
     <View className="mx-4 mt-4 rounded-3xl overflow-hidden bg-indigo-50 border border-indigo-100 h-44">
       {/* 배경 */}
-      <View className="absolute inset-0 bg-gradient-to-b from-indigo-50 to-violet-50" />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#EEF2FF' }} />
       <View className="absolute bottom-0 left-0 right-0 h-16 bg-amber-50/60" />
 
       {/* 레벨 뱃지 */}
@@ -182,27 +195,19 @@ export default function ItemStoreScreen() {
 
   const handleBuy = useCallback((item: StoreItem) => {
     if (pointBalance < item.price) {
-      Alert.alert('코인 부족', `${item.name} 구매에는 🪙 ${item.price} 코인이 필요합니다.\n현재 잔고: ${pointBalance} 코인`);
+      showAlert('코인 부족', `${item.name} 구매에는 🪙 ${item.price} 코인이 필요합니다.\n현재 잔고: ${pointBalance} 코인`);
       return;
     }
-    Alert.alert(
-      '구매 확인',
-      `${item.emoji} ${item.name}\n🪙 ${item.price} 코인을 사용합니다.`,
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '구매하기',
-          onPress: () => {
-            setOwnedItems(prev => new Set([...prev, item.id]));
-            Alert.alert('🎉 구매 완료!', `${item.emoji} ${item.name}이(가) 작업실에 추가되었습니다!`);
-          },
-        },
-      ]
-    );
+    const confirmed = Platform.OS === 'web'
+      ? window.confirm(`${item.emoji} ${item.name}\n🪙 ${item.price} 코인을 사용합니다. 구매할까요?`)
+      : true;
+    if (!confirmed) return;
+    setOwnedItems(prev => new Set([...prev, item.id]));
+    showAlert('🎉 구매 완료!', `${item.emoji} ${item.name}이(가) 작업실에 추가되었습니다!`);
   }, [pointBalance]);
 
   return (
-    <SafeAreaView className="flex-1 bg-hana-lightgray" edges={['top']}>
+    <SafeAreaView className="flex-1 bg-hana-lightgray" edges={Platform.OS === 'web' ? [] : ['top']}>
       {/* ── 헤더 ── */}
       <View className="px-5 pt-4 pb-3 bg-white border-b border-gray-100">
         <View className="flex-row items-center justify-between">

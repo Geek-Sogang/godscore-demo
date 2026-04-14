@@ -18,12 +18,25 @@ import {
   TouchableOpacity,
   Animated,
   Alert,
+  Platform,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMissionStore } from '../../application/stores/missionStore';
 import type { MissionFeatureId } from '../../../types/features';
 import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
+
+// ── 웹 안전 Alert ──────────────────────────────────────────────────
+function showAlert(title: string, message: string) {
+  if (Platform.OS === 'web') {
+    // eslint-disable-next-line no-alert
+    window.alert(`${title}\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+
 
 // ── 미션 ID → 이모지 매핑 ─────────────────────────────────────────
 const MISSION_EMOJI: Record<string, string> = {
@@ -318,7 +331,7 @@ export default function MissionUploadScreen({ route }: { route: any }) {
   // AI 분석 파이프라인
   const handleAnalyze = useCallback(async () => {
     if (!uploadedFileName) {
-      Alert.alert('파일 필요', '먼저 파일을 업로드해주세요.');
+      showAlert('파일 필요', '먼저 파일을 업로드해주세요.');
       return;
     }
     setIsAnalyzing(true);
@@ -343,7 +356,7 @@ export default function MissionUploadScreen({ route }: { route: any }) {
       setAiScore(82 + Math.random() * 15);
       setTxHash(result.txHash);
     } catch {
-      Alert.alert('오류', '분석 처리 중 오류가 발생했습니다.');
+      showAlert('오류', '분석 처리 중 오류가 발생했습니다.');
       setIsAnalyzing(false);
     }
   }, [uploadedFileName, missionId, completeMission]);

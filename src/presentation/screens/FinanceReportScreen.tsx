@@ -20,6 +20,7 @@ import {
   Animated,
   Alert,
   Linking,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -27,6 +28,7 @@ import {
   selectCurrentScore,
   selectSHAPValues,
 } from '../../application/stores/godScoreStore';
+
 
 // ── 금리 계산 로직 ─────────────────────────────────────────────────
 function calcRateDiscount(score: number): {
@@ -290,18 +292,25 @@ export default function FinanceReportScreen() {
   const { baseRate, discount, finalRate, tierLabel } = calcRateDiscount(Math.round(score));
 
   const handleCTA = () => {
-    Alert.alert(
-      '하나은행 신용대출',
-      `갓생점수 ${Math.round(score)}점 적용\n최종 금리 ${finalRate}% 우대 혜택으로\n하나은행 앱에서 신청할 수 있습니다.`,
-      [
-        { text: '닫기', style: 'cancel' },
-        { text: '앱으로 이동', onPress: () => Linking.openURL('https://www.kebhana.com') },
-      ]
-    );
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(
+        `갓생점수 ${Math.round(score)}점 적용\n최종 금리 ${finalRate}% 우대 혜택으로\n하나은행 앱에서 신청할 수 있습니다.\n\n하나은행으로 이동하시겠습니까?`
+      );
+      if (confirmed) Linking.openURL('https://www.kebhana.com');
+    } else {
+      Alert.alert(
+        '하나은행 신용대출',
+        `갓생점수 ${Math.round(score)}점 적용\n최종 금리 ${finalRate}% 우대 혜택으로\n하나은행 앱에서 신청할 수 있습니다.`,
+        [
+          { text: '닫기', style: 'cancel' },
+          { text: '앱으로 이동', onPress: () => Linking.openURL('https://www.kebhana.com') },
+        ]
+      );
+    }
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-hana-lightgray" edges={['top']}>
+    <SafeAreaView className="flex-1 bg-hana-lightgray" edges={Platform.OS === 'web' ? [] : ['top']}>
       {/* ── 헤더 ── */}
       <View className="px-5 pt-4 pb-3 bg-white border-b border-gray-100">
         <Text className="text-xl font-black text-gray-800">📊 금융 리포트</Text>
@@ -313,7 +322,7 @@ export default function FinanceReportScreen() {
         contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* ── 상단 배너 ── */}
-        <View className="mx-4 mt-4 bg-gradient-to-r from-green-600 to-emerald-500 rounded-3xl overflow-hidden">
+        <View className="mx-4 mt-4 rounded-3xl overflow-hidden" style={{ backgroundColor: '#059669' }}>
           <View className="bg-green-600 p-5">
             <View className="flex-row items-center gap-2 mb-3">
               <View className="w-10 h-10 bg-white/20 rounded-xl items-center justify-center">

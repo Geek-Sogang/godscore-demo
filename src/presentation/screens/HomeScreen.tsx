@@ -1,11 +1,17 @@
 // Figma 매칭: [메인보드 / 가상의 작업실 — HomeScreen]
 /**
- * HomeScreen.tsx
- * Step 1: 메인 홈 대시보드
+ * HomeScreen.tsx — Step 1 메인 홈 대시보드
+ *
+ * 웹 호환 포인트:
+ *  - navigation prop은 옵셔널 (expo-router 환경에서 없어도 동작)
+ *  - SafeAreaView edges 조건부 (web에서 SafeAreaView 문제 회피)
+ *  - className (NativeWind) 전용 스타일링
  *
  * 구성:
- *  - 헤더: 닉네임 + 갓생점수(큰 숫자 + 🔥 + 스트릭) + 코인 잔고
- *  - 가상의 작업실 영역 (3D 캐릭터 플레이스홀더 + 배경)
+ *  - 헤더: 닉네임 + 코인 잔고
+ *  - 갓생점수 배지 (티어 + 점수 + 🔥 연속 달성)
+ *  - 카테고리별 점수 미니 카드 4개
+ *  - 가상 작업실 플레이스홀더
  *  - Today's Quest 카드 (일일 퀘스트 + 예상 획득 코인)
  */
 
@@ -16,14 +22,18 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  StatusBar,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useGodScoreStore, selectCurrentScore, selectCurrentTier } from '../../application/stores/godScoreStore';
+import {
+  useGodScoreStore,
+  selectCurrentScore,
+  selectCurrentTier,
+} from '../../application/stores/godScoreStore';
 import { useMissionStore } from '../../application/stores/missionStore';
 import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
 
-// ── 상수 ───────────────────────────────────────────────────────────
+// ── 상수 ────────────────────────────────────────────────────────────
 const MOCK_USER = { id: 'user_001', nickname: '대흠님' };
 
 const TIER_COLORS: Record<string, string> = {
@@ -42,7 +52,7 @@ const TIER_BG: Record<string, string> = {
   UNRANKED: 'bg-gray-50 border-gray-200',
 };
 
-// ── 컴포넌트 ───────────────────────────────────────────────────────
+// ── 서브 컴포넌트 ────────────────────────────────────────────────────
 
 /** 헤더 갓생점수 배지 */
 function GodScoreBadge({
@@ -54,19 +64,31 @@ function GodScoreBadge({
   tier: string;
   streak: number;
 }) {
-  const tierLabel = tier === 'GOLD' ? '골드' : tier === 'SILVER' ? '실버' : tier === 'BRONZE' ? '브론즈' : '언랭크';
+  const tierLabel =
+    tier === 'GOLD' ? '골드' :
+    tier === 'SILVER' ? '실버' :
+    tier === 'BRONZE' ? '브론즈' : '언랭크';
+
   return (
     <View className="items-center">
-      <View className={`flex-row items-center gap-1 px-3 py-1 rounded-full border ${TIER_BG[tier] ?? 'bg-gray-50 border-gray-200'}`}>
+      <View
+        className={`flex-row items-center gap-1 px-3 py-1 rounded-full border ${
+          TIER_BG[tier] ?? 'bg-gray-50 border-gray-200'
+        }`}
+      >
         <Text className="text-xs font-semibold text-gray-500">{tierLabel}</Text>
       </View>
-      <View className="flex-row items-end gap-1 mt-0.5">
-        <Text className={`text-5xl font-black tracking-tight ${TIER_COLORS[tier] ?? 'text-gray-700'}`}>
+      <View className="flex-row items-end gap-1 mt-1">
+        <Text
+          className={`text-5xl font-black tracking-tight ${
+            TIER_COLORS[tier] ?? 'text-gray-700'
+          }`}
+        >
           {score}
         </Text>
         <Text className="text-2xl mb-1">🔥</Text>
       </View>
-      <Text className="text-xs text-gray-400">{streak}일 연속 달성 중</Text>
+      <Text className="text-xs text-gray-400 mt-0.5">{streak}일 연속 달성 중</Text>
     </View>
   );
 }
@@ -83,15 +105,19 @@ function CoinBadge({ balance }: { balance: number }) {
   );
 }
 
-/** 가상 작업실 배경 플레이스홀더 */
+/** 가상 작업실 영역 */
 function WorkspaceArea() {
   return (
-    <View className="mx-4 rounded-3xl overflow-hidden bg-gradient-to-b from-indigo-50 to-purple-50 h-52 border border-indigo-100">
-      {/* 배경 장식 */}
-      <View className="absolute inset-0 bg-indigo-50" />
-      <View className="absolute bottom-0 left-0 right-0 h-20 bg-amber-50 opacity-60" />
-
-      {/* 방 오브젝트들 */}
+    <View
+      className="mx-4 rounded-3xl overflow-hidden h-52 border border-indigo-100"
+      style={{ backgroundColor: '#EEF2FF' }}
+    >
+      {/* 바닥 레이어 */}
+      <View
+        className="absolute bottom-0 left-0 right-0 h-20"
+        style={{ backgroundColor: '#FEF3C7', opacity: 0.6 }}
+      />
+      {/* 가구 오브젝트 */}
       <View className="absolute top-4 right-6 w-12 h-16 bg-amber-100 rounded-lg border border-amber-200 items-center justify-center">
         <Text className="text-2xl">🪴</Text>
       </View>
@@ -99,24 +125,27 @@ function WorkspaceArea() {
         <Text className="text-xl">🖥️</Text>
       </View>
       <View className="absolute bottom-8 right-10 w-20 h-8 bg-amber-200 rounded-lg" />
-
-      {/* 3D 캐릭터 플레이스홀더 */}
-      <View className="absolute bottom-6 left-1/2 -translate-x-1/2 items-center">
-        <View className="w-24 h-32 bg-purple-100 rounded-t-full border-2 border-purple-200 items-center justify-center">
+      {/* 캐릭터 */}
+      <View className="absolute bottom-4 left-0 right-0 items-center">
+        <View className="w-24 h-28 bg-purple-100 rounded-t-full border-2 border-purple-200 items-center justify-center">
           <Text className="text-5xl">🧑‍💻</Text>
         </View>
-        <View className="w-28 h-4 bg-purple-50 rounded-full opacity-50 mt-1" />
+        <View className="w-28 h-3 bg-purple-200 rounded-full opacity-40 mt-1" />
       </View>
-
       {/* 작업실 레벨 뱃지 */}
-      <View className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/80 rounded-full px-3 py-1 border border-purple-100">
-        <Text className="text-xs font-semibold text-purple-600">🏠 내 작업실 Lv.3</Text>
+      <View className="absolute top-3 left-0 right-0 items-center">
+        <View
+          className="rounded-full px-3 py-1 border border-purple-100"
+          style={{ backgroundColor: 'rgba(255,255,255,0.85)' }}
+        >
+          <Text className="text-xs font-semibold text-purple-600">🏠 내 작업실 Lv.3</Text>
+        </View>
       </View>
     </View>
   );
 }
 
-/** 일일 퀘스트 아이템 */
+/** 개별 퀘스트 아이템 */
 function QuestItem({
   emoji,
   label,
@@ -129,12 +158,24 @@ function QuestItem({
   coins: number;
 }) {
   return (
-    <View className={`flex-row items-center gap-3 py-2.5 px-3 rounded-xl mb-1.5 ${done ? 'bg-green-50' : 'bg-white'} border ${done ? 'border-green-100' : 'border-gray-100'}`}>
-      <View className={`w-6 h-6 rounded-full border-2 items-center justify-center ${done ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>
+    <View
+      className={`flex-row items-center gap-3 py-2.5 px-3 rounded-xl mb-1.5 border ${
+        done ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
+      }`}
+    >
+      <View
+        className={`w-6 h-6 rounded-full border-2 items-center justify-center ${
+          done ? 'bg-green-500 border-green-500' : 'border-gray-300'
+        }`}
+      >
         {done && <Text className="text-white text-xs font-bold">✓</Text>}
       </View>
       <Text className="text-base">{emoji}</Text>
-      <Text className={`flex-1 text-sm font-medium ${done ? 'text-gray-400 line-through' : 'text-gray-700'}`}>
+      <Text
+        className={`flex-1 text-sm font-medium ${
+          done ? 'text-gray-400 line-through' : 'text-gray-700'
+        }`}
+      >
         {label}
       </Text>
       <View className="flex-row items-center gap-0.5">
@@ -155,19 +196,20 @@ function TodaysQuestCard({
   totalCount: number;
   onNavigate: () => void;
 }) {
-  const progress = totalCount > 0 ? completedCount / totalCount : 0;
+  const progress    = totalCount > 0 ? completedCount / totalCount : 0;
   const earnedCoins = completedCount * 50;
-  const totalCoins = totalCount * 50;
+  const totalCoins  = totalCount * 50;
 
   const SAMPLE_QUESTS = [
-    { emoji: '⏰', label: '오전 7시 기상 인증', done: completedCount > 0, coins: 50 },
-    { emoji: '💼', label: '오늘 업무 완료 인증', done: completedCount > 1, coins: 50 },
-    { emoji: '🛒', label: '식료품 구매 인증', done: completedCount > 2, coins: 50 },
-    { emoji: '♻️', label: '에너지 절약 미션', done: completedCount > 3, coins: 50 },
+    { emoji: '⏰', label: '오전 7시 기상 인증',  done: completedCount > 0,  coins: 50 },
+    { emoji: '💼', label: '오늘 업무 완료 인증', done: completedCount > 1,  coins: 50 },
+    { emoji: '🛒', label: '식료품 구매 인증',    done: completedCount > 2,  coins: 50 },
+    { emoji: '♻️', label: '에너지 절약 미션',    done: completedCount > 3,  coins: 50 },
   ];
 
   return (
-    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 overflow-hidden"
+      style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 4 }}>
       {/* 카드 헤더 */}
       <View className="flex-row items-center justify-between px-4 pt-4 pb-2">
         <View className="flex-row items-center gap-2">
@@ -214,19 +256,19 @@ function TodaysQuestCard({
   );
 }
 
-/** 갓생점수 분석 미니 카드 */
-function ScoreAnalysisRow({ snapshot }: { snapshot: any }) {
+/** 카테고리별 점수 미니 카드 행 */
+function ScoreAnalysisRow({ snapshot }: { snapshot: Record<string, number> | null | undefined }) {
   if (!snapshot) return null;
   const categories = [
-    { label: '생활', key: 'fA', emoji: '🌅', color: 'bg-orange-100 text-orange-600' },
-    { label: '일·소득', key: 'fB', emoji: '💼', color: 'bg-blue-100 text-blue-600' },
-    { label: '소비', key: 'fC', emoji: '💳', color: 'bg-purple-100 text-purple-600' },
-    { label: 'ESG', key: 'fD', emoji: '🌿', color: 'bg-green-100 text-green-600' },
+    { label: '생활',   key: 'fA', emoji: '🌅', color: 'bg-orange-100 text-orange-600' },
+    { label: '일·소득', key: 'fB', emoji: '💼', color: 'bg-blue-100 text-blue-600'   },
+    { label: '소비',   key: 'fC', emoji: '💳', color: 'bg-purple-100 text-purple-600' },
+    { label: 'ESG',    key: 'fD', emoji: '🌿', color: 'bg-green-100 text-green-600'  },
   ];
   return (
     <View className="mx-4 mt-3 flex-row gap-2">
       {categories.map(({ label, key, emoji, color }) => {
-        const val = Math.round(snapshot[key] ?? 0);
+        const val = Math.round((snapshot[key] as number | undefined) ?? 0);
         return (
           <View key={key} className="flex-1 bg-white rounded-2xl border border-gray-100 p-3 items-center">
             <Text className="text-xl mb-1">{emoji}</Text>
@@ -239,22 +281,27 @@ function ScoreAnalysisRow({ snapshot }: { snapshot: any }) {
   );
 }
 
-// ── 메인 컴포넌트 ──────────────────────────────────────────────────
-export default function HomeScreen({ navigation }: { navigation: any }) {
-  const score       = useGodScoreStore(selectCurrentScore);
-  const tier        = useGodScoreStore(selectCurrentTier);
-  const snapshot    = useGodScoreStore(s => s.currentSnapshot);
-  const isCalc      = useGodScoreStore(s => s.isCalculating);
-  const seedMock    = useGodScoreStore(s => s.seedMockData);
+// ── 메인 컴포넌트 ────────────────────────────────────────────────────
+interface HomeScreenProps {
+  /** react-navigation에서 주입되는 navigation prop (옵셔널 — expo-router 환경 대응) */
+  navigation?: { navigate: (screen: string) => void };
+}
 
-  const pointBalance    = useMissionStore(s => s.pointBalance);
-  const streak          = useMissionStore(s => s.streak);
-  const dailyStatus     = useMissionStore(s => s.dailyStatus);
-  const loadAndRefresh  = useMissionStore(s => s.loadAndRefreshAll);
+export default function HomeScreen({ navigation }: HomeScreenProps) {
+  const score    = useGodScoreStore(selectCurrentScore);
+  const tier     = useGodScoreStore(selectCurrentTier);
+  const snapshot = useGodScoreStore(s => s.currentSnapshot);
+  const isCalc   = useGodScoreStore(s => s.isCalculating);
+  const seedMock = useGodScoreStore(s => s.seedMockData);
+
+  const pointBalance   = useMissionStore(s => s.pointBalance);
+  const streak         = useMissionStore(s => s.streak);
+  const dailyStatus    = useMissionStore(s => s.dailyStatus);
+  const loadDailyMissions = useMissionStore(s => s.loadDailyMissions);
 
   useEffect(() => {
     seedMock(MOCK_USER.id);
-    loadAndRefresh(MOCK_USER.id);
+    loadDailyMissions(MOCK_USER.id);
   }, []);
 
   const completedCount = dailyStatus
@@ -264,23 +311,25 @@ export default function HomeScreen({ navigation }: { navigation: any }) {
   const streakDays = streak?.currentStreak ?? 0;
 
   return (
-    <SafeAreaView className="flex-1 bg-hana-cream" edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFF9F0" />
+    <SafeAreaView
+      className="flex-1 bg-hana-cream"
+      edges={Platform.OS === 'web' ? [] : ['top']}
+    >
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 32 }}
       >
         {/* ── 헤더 ── */}
-        <View className="flex-row items-center justify-between px-5 pt-4 pb-3">
+        <View className="flex-row items-center justify-between px-5 pt-5 pb-3">
           <View>
             <Text className="text-xs text-gray-400 font-medium">안녕하세요 👋</Text>
-            <Text className="text-lg font-black text-gray-800">{MOCK_USER.nickname}</Text>
+            <Text className="text-xl font-black text-gray-800">{MOCK_USER.nickname}</Text>
           </View>
           <CoinBadge balance={pointBalance} />
         </View>
 
         {/* ── 갓생점수 ── */}
-        <View className="items-center py-4">
+        <View className="items-center py-5">
           {isCalc ? (
             <ActivityIndicator size="large" color="#00A651" />
           ) : (
@@ -293,13 +342,13 @@ export default function HomeScreen({ navigation }: { navigation: any }) {
         </View>
 
         {/* ── 카테고리별 점수 ── */}
-        <ScoreAnalysisRow snapshot={snapshot} />
+        <ScoreAnalysisRow snapshot={snapshot as Record<string, number> | null | undefined} />
 
         {/* ── 가상 작업실 ── */}
         <View className="mt-5">
           <View className="flex-row items-center justify-between px-5 mb-2">
             <Text className="text-base font-bold text-gray-700">🏠 내 작업실</Text>
-            <TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.7}>
               <Text className="text-xs text-green-600 font-semibold">꾸미기 →</Text>
             </TouchableOpacity>
           </View>
