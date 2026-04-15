@@ -11,7 +11,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { MissionLog, DailyMissionStatus, UserStreak } from '../../../types/mission';
 import type { MissionFeatureId } from '../../../types/features';
-import { MISSION_DEFINITIONS, getDailyMissions } from '../../domain/entities/Mission';
+import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
 import type { IMissionRepository } from '../../domain/repositories/IMissionRepository';
 import { missionRepository } from '../../infrastructure/supabase/MissionRepositoryImpl';
 
@@ -63,7 +63,7 @@ export const useMissionStore = create<MissionState & MissionActions>()(
       // ── [수정 2] 단일 set() 트랜잭션 ──────────────────────────────
       loadDailyMissions: (userId) => {
         const today      = new Date().toISOString().slice(0, 10);
-        const dailyDefs  = getDailyMissions();
+        const dailyDefs  = Object.values(MISSION_DEFINITIONS); // 전체 16개 미션 (daily 한정 제거)
         const completed  = get().completedLogs;
         const balance    = _repo.getPointBalance(userId);
         const streak     = _repo.getUserStreak(userId) ?? null;
@@ -121,7 +121,7 @@ export const useMissionStore = create<MissionState & MissionActions>()(
           const streak  = _repo.getUserStreak(userId) ?? null;
           const today   = new Date().toISOString().slice(0, 10);
           const newCompleted = [...get().completedLogs, result.missionLog];
-          const dailyDefs  = getDailyMissions();
+          const dailyDefs  = Object.values(MISSION_DEFINITIONS); // 전체 16개 미션 (daily 한정 제거)
           const missionsRecord = Object.fromEntries(
             dailyDefs.map(def => [def.id, newCompleted.some(l => l.missionId === def.id)])
           ) as Partial<Record<MissionFeatureId, boolean>>;
