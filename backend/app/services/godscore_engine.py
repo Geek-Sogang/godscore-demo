@@ -122,78 +122,10 @@ class GodScoreEngine:
             )
             self._fallback_mode = True
 
-    def _train_with_synthetic_data(self) -> None:
-        """합성 데이터로 XGBoost 초기 학습 (실제 데이터 없이 데모 동작)"""
-        np.random.seed(42)
-        n = 5000
-        X = pd.DataFrame(
-            np.random.uniform(0, 1, (n, len(FEATURE_COLUMNS))),
-            columns=FEATURE_COLUMNS,
-        )
-
-        # 목표값 생성: 초기 intra_weights 적용 가중합 기반
-        # (단순 평균 대신 가중합으로 생성 → 모델이 초기부터 가중치 구조 학습)
-        fA = self._weighted_sum_from_df(X, "A")
-        fB = self._weighted_sum_from_df(X, "B")
-        fC = self._weighted_sum_from_df(X, "C")
-        fD = self._weighted_sum_from_df(X, "D")
-        wA = CATEGORY_WEIGHTS["wA"]
-        wB = CATEGORY_WEIGHTS["wB"]
-        wC = CATEGORY_WEIGHTS["wC"]
-        wD = CATEGORY_WEIGHTS["wD"]
-        y = np.clip(
-            (wA * fA + wB * fB + wC * fC + wD * fD) / WEIGHT_SUM * 1000
-            + np.random.normal(0, 20, n),
-            0, 1000,
-        )
-
-        self.model = xgb.XGBRegressor(
-            n_estimators=200, max_depth=6, learning_rate=0.05,
-            subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=-1,
-        )
-        self.model.fit(X, y)
-        self.explainer = shap.TreeExplainer(self.model)
-
-        # 학습 직후 feature_importances_ 기반으로 intra_weights 첫 갱신
-        self._update_intra_weights_from_importance(blend_ratio=1.0)  # 초기 학습: 100% 새 값
-
-        self._save()
-        logger.info(f"✅ 초기 학습 완료 → {self.model_path}")
-
-    # ── 분기 재학습 (Public API) ──────────────────────
-
-    def retrain(self, X_df: pd.DataFrame, y: np.ndarray) -> dict:
-        """
-        분기 1회 전체 재학습.
-        실서비스: Celery Beat가 최근 90일 mission_logs를 집계 후 호출.
-
-        Args:
-            X_df: 피처 DataFrame (columns = FEATURE_COLUMNS)
-            y:    목표값 배열 (실제 대출 상환 여부 or 기존 갓생스코어)
-
-        Returns:
-            { "old_weights": ..., "new_weights": ..., "delta": ... }
-        """
-        old_weights = dict(self.intra_weights)
-
-        # XGBoost 재학습
-        self.model.fit(X_df, y, verbose=False)
-        self.explainer = shap.TreeExplainer(self.model)
-
-        # feature_importances_ 기반 intra_weights 갱신 (블렌딩)
-        self._update_intra_weights_from_importance(blend_ratio=0.7)
-
-        self._save()
-
-        delta = {k: round(self.intra_weights[k] - old_weights[k], 4) for k in old_weights}
-        logger.info(f"🔄 분기 재학습 완료. 가중치 변동: {delta}")
-        return {
-            "old_weights": old_weights,
-            "new_weights": dict(self.intra_weights),
-            "delta": delta,
-        }
-
-    # ── 점수 산출 ─────────────────────────────────────
+    # ── 재학습(retrain) 메서드 분리 안내 ──────────────────────────────
+    # XGBoost 재학습 및 가중치 갱신은 은행 내부 배치 파이프라인에서 실행.
+    # 앱 서버는 추론(inference)만 담당 → jobs/ml/retrain.py 참조.
+    # ─────────────────────────────────────────────────────────────────
 
     def calculate(
         self,
@@ -291,52 +223,6 @@ class GodScoreEngine:
         cols = CATEGORY_SLICES[category]
         total_w = sum(INITIAL_INTRA_WEIGHTS[c] for c in cols)
         return sum(X[c] * INITIAL_INTRA_WEIGHTS[c] for c in cols) / total_w
-
-    def _update_intra_weights_from_importance(self, blend_ratio: float = 0.7) -> None:
-        """
-        XGBoost feature_importances_ → 카테고리 내 미션별 가중치 갱신.
-
-        알고리즘:
-          1. feature_importances_ 추출 (각 피처가 예측에 기여하는 비중)
-          2. 카테고리 내 정규화: 카테고리 내 합계 = 1.0
-          3. 블렌딩: new = blend_ratio × importance기반 + (1-blend_ratio) × 기존값
-             → 급격한 가중치 변동 방지 (분기 단위 완만한 재조정)
-
-        Args:
-            blend_ratio: 새 가중치 반영 비율 (초기학습: 1.0, 분기재학습: 0.7)
-        """
-        importances = dict(zip(FEATURE_COLUMNS, self.model.feature_importances_))
-
-        for category, cols in CATEGORY_SLICES.items():
-            # 카테고리 내 각 피처의 importance (최소 1e-9 보정)
-            raw = {c: max(float(importances.get(c, 0.0)), 1e-9) for c in cols}
-            total = sum(raw.values())
-            # 카테고리 내 정규화
-            normalized = {c: v / total for c, v in raw.items()}
-
-            # 블렌딩 적용
-            for c in cols:
-                self.intra_weights[c] = round(
-                    blend_ratio * normalized[c]
-                    + (1.0 - blend_ratio) * self.intra_weights[c],
-                    4,
-                )
-
-        logger.info(
-            f"📊 intra_weights 갱신 (blend={blend_ratio:.0%}) | "
-            f"A: {[round(self.intra_weights[c],3) for c in CATEGORY_SLICES['A']]} | "
-            f"B: {[round(self.intra_weights[c],3) for c in CATEGORY_SLICES['B']]}"
-        )
-
-    def _save(self) -> None:
-        """모델 + intra_weights pickle 저장"""
-        self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.model_path, "wb") as f:
-            pickle.dump({
-                "model":         self.model,
-                "explainer":     self.explainer,
-                "intra_weights": self.intra_weights,   # v2.0 신규
-            }, f)
 
     def _get_grade(self, score: float) -> tuple:
         emoji_map = {"레전드": "🏆", "갓생": "⭐", "성실": "💪", "새싹": "🌱"}
