@@ -6,6 +6,9 @@
  * [수정 2] 리렌더 배칭: loadDailyMissions + refreshPointBalance + refreshStreak
  *          → 단일 set() 블록으로 통합 (3회 → 1회 리렌더)
  * [수정 3] Race Condition 가드: processingMissionId(단일값)으로 중복 요청 차단
+ * [수정 4] Mission -> GodScore 연쇄 반응
+ *          completeMission 성공 직후 useGodScoreStore.getState().calculateScore(userId) 호출
+ *          → 미션 완료 시 홈·리포트 점수·금리 실시간 갱신
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -14,6 +17,8 @@ import type { MissionFeatureId } from '../../../types/features';
 import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
 import type { IMissionRepository } from '../../domain/repositories/IMissionRepository';
 import { missionRepository } from '../../infrastructure/supabase/MissionRepositoryImpl';
+// [수정 4] GodScore 스토어 연결 — 미션 완료 후 점수 자동 재계산
+import { useGodScoreStore } from './godScoreStore';
 
 // ── State ────────────────────────────────────────────────────────────
 interface MissionState {
@@ -63,7 +68,7 @@ export const useMissionStore = create<MissionState & MissionActions>()(
       // ── [수정 2] 단일 set() 트랜잭션 ──────────────────────────────
       loadDailyMissions: (userId) => {
         const today      = new Date().toISOString().slice(0, 10);
-        const dailyDefs  = Object.values(MISSION_DEFINITIONS); // 전체 16개 미션 (daily 한정 제거)
+        const dailyDefs  = Object.values(MISSION_DEFINITIONS); // 전체 16개 미션
         const completed  = get().completedLogs;
         const balance    = _repo.getPointBalance(userId);
         const streak     = _repo.getUserStreak(userId) ?? null;
@@ -92,7 +97,7 @@ export const useMissionStore = create<MissionState & MissionActions>()(
       // 하위 호환 별칭
       loadAndRefreshAll: (userId) => get().loadDailyMissions(userId),
 
-      // ── [수정 3] Race Condition 가드 (단일 processingMissionId) ────
+      // ── [수정 3] Race Condition 가드 + [수정 4] GodScore 연쇄 반응 ──
       completeMission: async (userId, missionId, rawData, aiScore) => {
         // 이미 처리 중인 미션이 있으면 즉시 차단
         if (get().processingMissionId !== null) {
@@ -121,7 +126,7 @@ export const useMissionStore = create<MissionState & MissionActions>()(
           const streak  = _repo.getUserStreak(userId) ?? null;
           const today   = new Date().toISOString().slice(0, 10);
           const newCompleted = [...get().completedLogs, result.missionLog];
-          const dailyDefs  = Object.values(MISSION_DEFINITIONS); // 전체 16개 미션 (daily 한정 제거)
+          const dailyDefs   = Object.values(MISSION_DEFINITIONS);
           const missionsRecord = Object.fromEntries(
             dailyDefs.map(def => [def.id, newCompleted.some(l => l.missionId === def.id)])
           ) as Partial<Record<MissionFeatureId, boolean>>;
@@ -139,6 +144,12 @@ export const useMissionStore = create<MissionState & MissionActions>()(
               completionRate: dailyDefs.length > 0 ? completedCount / dailyDefs.length : 0,
               totalPointsEarned: newCompleted.reduce((s, l) => s + l.pointsEarned, 0),
             };
+          });
+
+          // [수정 4] 미션 완료 직후 갓생점수 실시간 재계산
+          // — 실패해도 미션 완료 결과는 보존 (graceful degradation)
+          useGodScoreStore.getState().calculateScore(userId).catch((err: unknown) => {
+            console.warn('[MissionStore] 점수 재계산 실패 (미션 완료는 정상 처리됨):', err);
           });
 
           return { txHash: result.txHash, verified: result.verified };

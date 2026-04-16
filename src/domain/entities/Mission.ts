@@ -12,7 +12,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '기상 인증',
     description: '목표 기상 시각 ±30분 이내에 기상을 인증하세요.',
     verificationMethod: 'HEALTHKIT',
-    rewardPoints: 30,
+    rewardPoints: 50,  // UI 동기화
     featureContribution: 1.0,
     isDaily: true,
     iconName: 'sun',
@@ -22,7 +22,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '수면 규칙성',
     description: '6~9시간 수면 후 수면 데이터를 동기화하세요.',
     verificationMethod: 'HEALTHKIT',
-    rewardPoints: 25,
+    rewardPoints: 50,  // UI 동기화
     featureContribution: 1.0,
     isDaily: true,
     iconName: 'moon',
@@ -32,7 +32,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '앱 출석 체크',
     description: '오늘 앱에 접속해 출석을 기록하세요.',
     verificationMethod: 'USAGE_STATS',
-    rewardPoints: 10,
+    rewardPoints: 50,  // UI 동기화
     featureContribution: 1.0,
     isDaily: true,
     iconName: 'check-circle',
@@ -53,7 +53,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '포트폴리오 업데이트',
     description: '최근 작업물 또는 포트폴리오를 업로드하세요. (AI 검증)',
     verificationMethod: 'FILE_UPLOAD',
-    rewardPoints: 60,
+    rewardPoints: 100,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'briefcase',
@@ -63,7 +63,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '월 수입 입력',
     description: '이번 달 수입 내역을 입력 또는 연동하세요.',
     verificationMethod: 'MYDATA_API',
-    rewardPoints: 40,
+    rewardPoints: 80,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'dollar-sign',
@@ -73,7 +73,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '수입 안정성 확인',
     description: '최근 3개월 수입 데이터를 마이데이터로 확인하세요.',
     verificationMethod: 'MYDATA_API',
-    rewardPoints: 35,
+    rewardPoints: 80,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'trending-up',
@@ -83,7 +83,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '업무 완료 인증',
     description: '완료한 프로젝트/업무 결과물을 인증하세요.',
     verificationMethod: 'FILE_UPLOAD',
-    rewardPoints: 70,
+    rewardPoints: 100,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'check-square',
@@ -94,7 +94,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '소비 패턴 확인',
     description: '이번 달 지출 카테고리를 마이데이터로 확인하세요.',
     verificationMethod: 'MYDATA_API',
-    rewardPoints: 25,
+    rewardPoints: 60,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'pie-chart',
@@ -104,7 +104,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '충동 결제 자제',
     description: '오늘 새벽(00:00~06:00) 결제를 하지 않으면 달성!',
     verificationMethod: 'MYDATA_API',
-    rewardPoints: 20,
+    rewardPoints: 60,  // UI 동기화
     featureContribution: 1.0,
     isDaily: true,
     iconName: 'shield',
@@ -114,7 +114,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '식료품 구매 인증',
     description: '마트/장보기 영수증 또는 카드 내역을 인증하세요.',
     verificationMethod: 'RECEIPT_UPLOAD',
-    rewardPoints: 20,
+    rewardPoints: 50,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'shopping-cart',
@@ -124,7 +124,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '잔고 유지',
     description: '주계좌 잔액이 목표 금액 이상 유지되면 달성!',
     verificationMethod: 'MYDATA_API',
-    rewardPoints: 30,
+    rewardPoints: 70,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'credit-card',
@@ -135,7 +135,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '운동·자기관리',
     description: '오늘 30분 이상 운동 또는 자기관리 활동을 기록하세요.',
     verificationMethod: 'HEALTHKIT',
-    rewardPoints: 30,
+    rewardPoints: 50,  // UI 동기화
     featureContribution: 1.0,
     isDaily: true,
     iconName: 'activity',
@@ -145,7 +145,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '대중교통 이용',
     description: '오늘 대중교통을 이용한 내역을 인증하세요.',
     verificationMethod: 'MYDATA_API',
-    rewardPoints: 25,
+    rewardPoints: 50,  // UI 동기화
     featureContribution: 1.0,
     isDaily: true,
     iconName: 'map',
@@ -155,7 +155,7 @@ export const MISSION_DEFINITIONS: Record<string, MissionDefinition> = {
     name: '에너지 절약',
     description: '에너지 절약 실천 내역을 인증하세요.',
     verificationMethod: 'RECEIPT_UPLOAD',
-    rewardPoints: 20,
+    rewardPoints: 60,  // UI 동기화
     featureContribution: 1.0,
     isDaily: false,
     iconName: 'zap',

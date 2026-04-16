@@ -1,466 +1,489 @@
-// Figma 매칭: [세부 미션 수행 — MissionUploadScreen]
+// Figma 매칭: [미션 인증 세부 — 18:1726]
 /**
  * MissionUploadScreen.tsx
- * Step 3: 작업물 업로드 + AI 분석 진행
- *
- * 구성:
- *  - 상단: 미션 정보 헤더 (미션명 + 카테고리 + 예상 획득 코인)
- *  - 중단: 작업물 업로드 카드 (파일 선택 버튼, 용량 안내, 미리보기)
- *  - 하단: AI 분석 진행 카드 (단계별 로딩 애니메이션 + 진척도)
- *  - 완료 시: 블록체인 등록 결과 + 획득 코인 애니메이션
+ * - 헤더: HomeScreen과 동일 inline style + 로컬 코인 PNG + pointBalance 연동
+ * - + 버튼: expo-document-picker로 실제 파일 선택 (노트북/모바일 파일시스템)
+ * - 업로드 버튼: 파일 유무 상관없이 즉시 AI 분석 시작
+ * - AI 분석 단계: ActivityIndicator 스피너 → 순차 초록 완료 (700ms 간격)
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   TouchableOpacity,
-  Animated,
-  Alert,
-  Platform,
+  ScrollView,
+  Image,
   ActivityIndicator,
+  Animated,
+  TextInput,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as DocumentPicker from 'expo-document-picker';
+import { useNavigation } from '@react-navigation/native';
 import { useMissionStore } from '../../application/stores/missionStore';
-import type { MissionFeatureId } from '../../../types/features';
-import { MISSION_DEFINITIONS } from '../../domain/entities/Mission';
+import { useAuthStore } from '../../application/stores/authStore';
 import type { MissionStackParamList } from '../navigation/AppNavigator';
+import { MOCK_USER_ID } from '../../constants/mockData';
 
-// ── 웹 안전 Alert ──────────────────────────────────────────────────
-function showAlert(title: string, message: string) {
-  if (Platform.OS === 'web') {
-    // eslint-disable-next-line no-alert
-    window.alert(`${title}\n${message}`);
-  } else {
-    Alert.alert(title, message);
-  }
-}
+// ── 스케일링 ──────────────────────────────────────────────────
+const { width: SCREEN_W } = Dimensions.get('window');
+const S = (n: number): number => Math.round((Math.min(SCREEN_W, 480) / 390) * n);
 
-
-
-// ── 미션 ID → 이모지 매핑 ─────────────────────────────────────────
-const MISSION_EMOJI: Record<string, string> = {
-  A_1: '⏰', A_2: '😴', A_3: '📅', A_4: '✅',
-  B_1: '💼', B_2: '💵', B_3: '📈', B_4: '⭐',
-  C_1: '💳', C_2: '🌙', C_3: '🛒', C_4: '🏦',
-  D_1: '🏃', D_2: '🚌', D_3: '⚡', D_4: '🤝',
+// ── 에셋 ─────────────────────────────────────────────────────
+const IMG = {
+  border:    { uri: 'https://www.figma.com/api/mcp/asset/48592c39-2a45-4894-9b62-d52b64889fcf' },
+  coin:      require('../../../assets/images/coin.png'),
+  portfolio: { uri: 'https://www.figma.com/api/mcp/asset/53477de7-fa9d-407b-96e3-323dfe820996' },
 };
 
+// ── 미션별 mock 파일명 ────────────────────────────────────────
+const MOCK_FILENAMES: Record<string, Record<string, string>> = {
+  pdf:     { B_1: 'portfolio_2026.pdf',    B_4: 'work_completion.pdf', D_3: 'energy_bill.pdf',    D_4: 'volunteer_cert.pdf'    },
+  img:     { B_1: 'portfolio_cover.png',   B_4: 'project_done.png',    D_3: 'bill_photo.jpg',     D_4: 'certificate.jpg'       },
+  mp4:     { B_1: 'demo_video.mp4',        B_4: 'work_demo.mp4'                                                                },
+  zip:     { B_1: 'portfolio_bundle.zip'                                                                                       },
+  receipt: { D_3: 'energy_bill_scan.jpg',  D_4: 'donation_receipt.jpg'                                                        },
+  url:     {},
+};
 
-// ── 상수 ──────────────────────────────────────────────────────────
-const MOCK_USER_ID = 'user_001';
+// ── 미션 설정 ─────────────────────────────────────────────────
+type FileTypeItem = { id: string; label: string };
+type MissionConfig = {
+  title: string; desc: string; tagLabel: string;
+  fileTypes: FileTypeItem[]; uploadHint: string;
+};
+const MISSION_CONFIGS: Record<string, MissionConfig> = {
+  B_1: {
+    title: '포트폴리오', desc: '최근 작업물 또는 포트폴리오를 업로드하세요.',
+    tagLabel: '파일 업로드',
+    fileTypes: [
+      { id: 'pdf',  label: '📄 PDF'    },
+      { id: 'img',  label: '🖼️ 이미지' },
+      { id: 'mp4',  label: '🎬 MP4'    },
+      { id: 'zip',  label: '📦 ZIP'    },
+      { id: 'url',  label: '🔗 URL'    },
+    ],
+    uploadHint: '최대 500MB | PDF · JPG · PNG · MP4 · ZIP · URL 지원',
+  },
+  B_4: {
+    title: '업무 완료 인증', desc: '프로젝트 완료 스크린샷 또는 파일을 첨부하세요.',
+    tagLabel: '파일 업로드',
+    fileTypes: [
+      { id: 'img',  label: '🖼️ 이미지' },
+      { id: 'pdf',  label: '📄 PDF'    },
+      { id: 'mp4',  label: '🎬 MP4'    },
+      { id: 'url',  label: '🔗 URL'    },
+    ],
+    uploadHint: '최대 500MB | JPG · PNG · PDF · MP4 · URL 지원',
+  },
+  D_3: {
+    title: '에너지 절약 미션', desc: '전기세, 가스비 고지서를 업로드하세요.',
+    tagLabel: 'OCR 분석',
+    fileTypes: [
+      { id: 'img',     label: '🖼️ 이미지' },
+      { id: 'pdf',     label: '📄 PDF'    },
+      { id: 'receipt', label: '🧾 영수증' },
+    ],
+    uploadHint: '최대 500MB | JPG · PNG · PDF · 영수증 지원',
+  },
+  D_4: {
+    title: '봉사·기부 활동', desc: '봉사 확인서 또는 기부 영수증을 업로드하세요.',
+    tagLabel: '파일 업로드',
+    fileTypes: [
+      { id: 'pdf',     label: '📄 PDF'    },
+      { id: 'img',     label: '🖼️ 이미지' },
+      { id: 'receipt', label: '🧾 영수증' },
+    ],
+    uploadHint: '최대 500MB | PDF · JPG · PNG · 영수증 지원',
+  },
+};
 
+// ── AI 분석 단계 ─────────────────────────────────────────────
 const AI_STEPS = [
-  { label: '파일 검증 중',        emoji: '📂', duration: 800  },
-  { label: 'AI 진위 분석 중',     emoji: '🤖', duration: 1200 },
-  { label: '행동 점수 산출 중',   emoji: '📊', duration: 900  },
-  { label: 'keccak256 해싱',      emoji: '🔐', duration: 600  },
-  { label: '블록체인 등록 중',    emoji: '⛓️', duration: 1000 },
+  { id: 1, label: '📂 파일 검증 중'      },
+  { id: 2, label: '🤖 AI 진위 분석 중'   },
+  { id: 3, label: '📊 행동 점수 산출 중' },
+  { id: 4, label: '🔐 keccak256 해싱'    },
+  { id: 5, label: '⛓️ 블록체인 등록 중'  },
 ];
 
-const FILE_TYPES = [
-  { label: 'PDF',   emoji: '📄', color: 'bg-red-50 border-red-200 text-red-600'    },
-  { label: '이미지', emoji: '🖼️', color: 'bg-blue-50 border-blue-200 text-blue-600' },
-  { label: '영수증', emoji: '🧾', color: 'bg-amber-50 border-amber-200 text-amber-600' },
-  { label: '링크',  emoji: '🔗', color: 'bg-purple-50 border-purple-200 text-purple-600' },
-];
+type Props = NativeStackScreenProps<MissionStackParamList, 'MissionUpload'>;
 
-// ── 업로드 파일 카드 ───────────────────────────────────────────────
-function FileUploadCard({
-  selectedFileType,
-  onSelectFileType,
-  onUpload,
-  isUploading,
-  uploadedFileName,
-}: {
-  selectedFileType: number | null;
-  onSelectFileType: (idx: number) => void;
-  onUpload: () => void;
-  isUploading: boolean;
-  uploadedFileName: string | null;
-}) {
+export default function MissionUploadScreen({ route }: Props): React.JSX.Element {
+  const { missionId }  = route.params;
+  const navigation     = useNavigation();
+  const { completeMission, pointBalance } = useMissionStore();
+  const { userId }     = useAuthStore();
+  const config         = MISSION_CONFIGS[missionId] ?? MISSION_CONFIGS['B_1'];
+
+  // ── 상태 ─────────────────────────────────────────────────
+  const [selectedType, setSelectedType]       = useState<string>(config.fileTypes[0]?.id ?? 'pdf');
+  const [uploadedFileName, setUploadedFileName] = useState<string>('');
+  const [urlInput, setUrlInput]               = useState<string>('');
+  const [isAnalyzing, setIsAnalyzing]         = useState(false);
+  const [completedSteps, setCompletedSteps]   = useState<number>(0);
+  const [txHash, setTxHash]                   = useState<string>('');
+  const [isCompleted, setIsCompleted]         = useState(false);
+
+  // ── 단계별 완료 페이드인 애니메이션 ──────────────────────
+  const stepAnims = useRef(AI_STEPS.map(() => new Animated.Value(0))).current;
+
+  useEffect(() => {
+    if (completedSteps > 0) {
+      Animated.timing(stepAnims[completedSteps - 1], {
+        toValue: 1, duration: 350, useNativeDriver: false,
+      }).start();
+    }
+  }, [completedSteps, stepAnims]);
+
+  // ── + 버튼: 실제 파일 피커 (expo-document-picker) ──────────
+  const handlePickFile = useCallback(async (): Promise<void> => {
+    if (isAnalyzing || isCompleted) return;
+
+    // 선택 가능한 MIME 타입 (파일 유형 탭 기반)
+    const mimeMap: Record<string, string[]> = {
+      pdf:     ['application/pdf'],
+      img:     ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+      mp4:     ['video/mp4', 'video/*'],
+      zip:     ['application/zip', 'application/x-zip-compressed'],
+      receipt: ['image/jpeg', 'image/png', 'application/pdf'],
+      url:     [],
+    };
+    const mimeTypes = mimeMap[selectedType] ?? ['*/*'];
+
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: mimeTypes,
+        copyToCacheDirectory: false,
+        multiple: false,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        // 실제 선택한 파일명 사용
+        setUploadedFileName(result.assets[0].name);
+      }
+    } catch {
+      // 취소 또는 에러 시 무시
+    }
+  }, [isAnalyzing, isCompleted, selectedType]);
+
+  // ── AI 분석 순차 실행 ─────────────────────────────────────
+  const runAnalysis = useCallback((): void => {
+    setIsAnalyzing(true);
+    setCompletedSteps(0);
+    AI_STEPS.forEach((_, idx) => {
+      setTimeout(() => {
+        setCompletedSteps(idx + 1);
+        if (idx === AI_STEPS.length - 1) {
+          const mockTx = `0x${Math.random().toString(16).slice(2, 18)}`;
+          setTxHash(mockTx);
+          setIsCompleted(true);
+          setIsAnalyzing(false);
+          // AI 검증 점수 Mock: 80~98 사이의 랜덤 점수 (파일 업로드 미션 AI 판별 시뮬레이션)
+          const mockAiScore = Math.round(80 + Math.random() * 18);
+          completeMission(
+            userId ?? MOCK_USER_ID,
+            missionId as Parameters<typeof completeMission>[1],
+            JSON.stringify({ txHash: mockTx, completedAt: new Date().toISOString() }),
+            mockAiScore,
+          ).catch(() => {});
+        }
+      }, (idx + 1) * 700);
+    });
+  }, [completeMission, missionId, userId]);
+
+  // ── 업로드 버튼: 여기서만 mock 데이터 주입 후 분석 시작 ──
+  const handleUpload = useCallback((): void => {
+    if (isAnalyzing || isCompleted) return;
+    if (selectedType === 'url' && urlInput.trim() === '') {
+      // URL 미입력 시 mock URL 주입
+      setUrlInput('https://github.com/example/portfolio');
+    } else if (uploadedFileName.trim() === '') {
+      // 파일 미선택 또는 선택 대기 중 → 업로드 시점에 mock 파일명 주입
+      const name = MOCK_FILENAMES[selectedType]?.[missionId]
+        ?? MOCK_FILENAMES[selectedType]?.['B_1']
+        ?? 'upload_file.pdf';
+      setUploadedFileName(name);
+    }
+    runAnalysis();
+  }, [isAnalyzing, isCompleted, selectedType, urlInput, uploadedFileName, missionId, runAnalysis]);
+
+  const handleDone = useCallback((): void => { navigation.goBack(); }, [navigation]);
+
   return (
-    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-      {/* 카드 헤더 */}
-      <View className="px-5 pt-5 pb-3 border-b border-gray-50">
-        <View className="flex-row items-center gap-2">
-          <View className="w-9 h-9 bg-green-50 rounded-xl items-center justify-center">
-            <Text className="text-lg">📎</Text>
-          </View>
-          <View>
-            <Text className="text-base font-bold text-gray-800">작업물 업로드</Text>
-            <Text className="text-xs text-gray-400">최대 10MB · PDF, JPG, PNG, 영수증 지원</Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#f5f2ed' }}>
+
+      {/* ── 헤더 ──────────────────────────────────────────── */}
+      <View style={{
+        height: 64, flexDirection: 'row', alignItems: 'center',
+        justifyContent: 'space-between', paddingHorizontal: 24,
+        backgroundColor: 'rgba(252,249,244,0.7)',
+        shadowColor: '#1c1c19', shadowOffset: { width: 0, height: S(8) },
+        shadowOpacity: 0.06, shadowRadius: 48,
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', columnGap: 12 }}>
+          <Image source={IMG.border} style={{ width: 40, height: 40, borderRadius: 20 }} />
+          <Text style={{ fontFamily: 'Hana2-Medium', color: '#006b58', fontSize: 18, letterSpacing: -0.45 }}>
+            하나 더
+          </Text>
+        </View>
+        <View style={{ width: 63, height: 27 }}>
+          <View style={{
+            position: 'absolute', top: 4, left: 0, right: 0, height: 19,
+            backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 7,
+          }} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', height: 27 }}>
+            <Image source={IMG.coin} style={{ width: 24, height: 25 }} resizeMode="contain" />
+            <Text style={{ fontFamily: 'Paperlogy-SemiBold', color: '#383835', fontSize: 13, marginLeft: 2 }}>
+              {pointBalance}
+            </Text>
           </View>
         </View>
       </View>
 
-      <View className="p-5">
-        {/* 파일 형식 선택 칩 */}
-        <Text className="text-xs font-semibold text-gray-500 mb-2.5">파일 형식 선택</Text>
-        <View className="flex-row gap-2 mb-4 flex-wrap">
-          {FILE_TYPES.map((ft, idx) => (
-            <TouchableOpacity
-              key={idx}
-              onPress={() => onSelectFileType(idx)}
-              className={`flex-row items-center gap-1.5 px-3 py-2 rounded-xl border ${
-                selectedFileType === idx
-                  ? ft.color
-                  : 'bg-gray-50 border-gray-200 text-gray-500'
-              }`}
-            >
-              <Text className="text-sm">{ft.emoji}</Text>
-              <Text className={`text-xs font-semibold ${
-                selectedFileType === idx ? '' : 'text-gray-500'
-              }`}>{ft.label}</Text>
-            </TouchableOpacity>
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: S(40) }}>
+
+        {/* ── 미션 카드 ─────────────────────────────────── */}
+        <View style={{
+          marginHorizontal: S(18), marginTop: S(20), backgroundColor: 'white',
+          borderRadius: S(15), paddingHorizontal: S(16), paddingVertical: S(20),
+          shadowColor: '#000', shadowOffset: { width: 0.5, height: 0.5 }, shadowOpacity: 0.1, shadowRadius: 2,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Image source={IMG.portfolio} style={{ width: S(40), height: S(40), marginRight: S(12) }} resizeMode="contain" />
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: S(8) }}>
+                <Text style={{ fontFamily: 'Paperlogy-SemiBold', color: '#090909', fontSize: S(16) }}>
+                  {config.title}
+                </Text>
+                <View style={{ backgroundColor: 'rgba(186,50,0,0.2)', borderRadius: S(5), paddingHorizontal: S(4), paddingVertical: S(2) }}>
+                  <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#ba3200', fontSize: S(11) }}>📂 파일 첨부</Text>
+                </View>
+              </View>
+              <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#8a8a8a', fontSize: S(13), marginTop: S(4) }} numberOfLines={2}>
+                {config.desc}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* ── 태그 ─────────────────────────────────────── */}
+        <View style={{ flexDirection: 'row', gap: S(7), marginHorizontal: S(28), marginTop: S(14) }}>
+          {[config.tagLabel, 'AI 분석', '블록체인 기록'].map((tag) => (
+            <View key={tag} style={{ backgroundColor: 'rgba(215,230,241,0.7)', borderRadius: S(10), paddingHorizontal: S(6), paddingVertical: S(3) }}>
+              <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#5f9ecb', fontSize: S(11) }}>{tag}</Text>
+            </View>
           ))}
         </View>
 
-        {/* 업로드 드롭존 */}
-        {uploadedFileName ? (
-          <View className="bg-green-50 border-2 border-green-200 border-dashed rounded-2xl p-5 items-center">
-            <Text className="text-3xl mb-2">✅</Text>
-            <Text className="text-sm font-bold text-green-700">{uploadedFileName}</Text>
-            <Text className="text-xs text-green-500 mt-1">업로드 완료</Text>
+        {/* ── 파일 업로드 섹션 ─────────────────────────── */}
+        <View style={{
+          marginHorizontal: S(18), marginTop: S(14), backgroundColor: 'white',
+          borderRadius: S(15), paddingTop: S(12), paddingBottom: S(16), paddingHorizontal: S(9),
+        }}>
+          <View style={{ marginLeft: S(12), marginBottom: S(8) }}>
+            <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#1b1b1b', fontSize: S(12) }}>🗂️ 오늘의 작업물 업로드</Text>
+            <Text style={{ fontFamily: 'Paperlogy-Regular', color: '#8a8a8a', fontSize: S(9), marginTop: S(3), marginLeft: S(16) }}>
+              {config.uploadHint}
+            </Text>
           </View>
-        ) : (
-          <TouchableOpacity
-            onPress={onUpload}
-            disabled={isUploading || selectedFileType === null}
-            activeOpacity={0.8}
-            className={`border-2 border-dashed rounded-2xl p-6 items-center ${
-              selectedFileType !== null
-                ? 'border-green-300 bg-green-50/50'
-                : 'border-gray-200 bg-gray-50'
-            }`}
-          >
-            {isUploading ? (
-              <ActivityIndicator size="large" color="#00A651" />
-            ) : (
-              <>
-                <Text className="text-4xl mb-3">
-                  {selectedFileType !== null ? FILE_TYPES[selectedFileType].emoji : '📁'}
-                </Text>
-                <Text className={`text-sm font-bold ${
-                  selectedFileType !== null ? 'text-green-700' : 'text-gray-400'
-                }`}>
-                  {selectedFileType !== null
-                    ? '탭하여 파일 선택'
-                    : '파일 형식을 먼저 선택하세요'}
-                </Text>
-                <Text className="text-xs text-gray-400 mt-1">또는 여기에 파일을 끌어다 놓으세요</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
+          <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.08)', marginHorizontal: S(8), marginBottom: S(16) }} />
 
-        {/* 주의 사항 */}
-        <View className="mt-3 flex-row items-start gap-2 bg-amber-50 rounded-xl p-3">
-          <Text className="text-sm">⚠️</Text>
-          <Text className="text-xs text-amber-700 flex-1 leading-relaxed">
-            AI가 업로드한 파일의 진위를 분석합니다. 허위 자료 제출 시 점수가 차감될 수 있습니다.
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-// ── AI 분석 진행 카드 ─────────────────────────────────────────────
-function AIAnalysisCard({
-  isActive,
-  currentStep,
-  totalSteps,
-  aiScore,
-  txHash,
-}: {
-  isActive: boolean;
-  currentStep: number;
-  totalSteps: number;
-  aiScore: number | null;
-  txHash: string | null;
-}) {
-  const progress = totalSteps > 0 ? currentStep / totalSteps : 0;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (!isActive) return;
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1,    duration: 600, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, [isActive]);
-
-  if (!isActive && !txHash) return null;
-
-  return (
-    <View className="mx-4 mt-4 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-      {/* 완료 상태 */}
-      {txHash ? (
-        <View className="p-5">
-          <View className="items-center mb-4">
-            <View className="w-16 h-16 bg-green-100 rounded-full items-center justify-center mb-3">
-              <Text className="text-3xl">🎉</Text>
-            </View>
-            <Text className="text-lg font-black text-gray-800">인증 완료!</Text>
-            <Text className="text-sm text-gray-400 mt-0.5">블록체인에 영구 기록되었습니다</Text>
+          {/* 파일 유형 탭 */}
+          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: S(10), marginBottom: S(16) }}>
+            {config.fileTypes.map((ft) => (
+              <TouchableOpacity key={ft.id}
+                onPress={() => { setSelectedType(ft.id); setUploadedFileName(''); setUrlInput(''); }}
+                style={{
+                  height: S(26), paddingHorizontal: S(9), borderRadius: S(9),
+                  backgroundColor: selectedType === ft.id ? 'rgba(215,230,241,0.9)' : 'rgba(242,242,242,0.7)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#5f9ecb', fontSize: S(10) }}>{ft.label}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* AI 점수 */}
-          {aiScore !== null && (
-            <View className="flex-row gap-3 mb-4">
-              <View className="flex-1 bg-blue-50 rounded-2xl p-3 items-center">
-                <Text className="text-xs text-blue-500 font-semibold">AI 진실성 점수</Text>
-                <Text className="text-2xl font-black text-blue-700 mt-1">{Math.round(aiScore)}</Text>
-                <Text className="text-xs text-blue-400">/100</Text>
-              </View>
-              <View className="flex-1 bg-green-50 rounded-2xl p-3 items-center">
-                <Text className="text-xs text-green-500 font-semibold">획득 포인트</Text>
-                <Text className="text-2xl font-black text-green-700 mt-1">+50</Text>
-                <Text className="text-xs text-green-400">🪙 코인</Text>
-              </View>
+          {/* URL 입력 or 드롭존 */}
+          {selectedType === 'url' ? (
+            <TextInput
+              value={urlInput}
+              onChangeText={setUrlInput}
+              placeholder="https://..."
+              placeholderTextColor="#aaa"
+              style={{
+                height: S(44), borderRadius: S(10), borderWidth: 1,
+                borderColor: 'rgba(0,103,173,0.2)', paddingHorizontal: S(12),
+                fontFamily: 'Paperlogy-Regular', fontSize: S(13), color: '#383835',
+                backgroundColor: 'rgba(215,230,241,0.15)', marginHorizontal: S(12),
+              }}
+              autoCapitalize="none" keyboardType="url"
+            />
+          ) : (
+            <View style={{
+              marginHorizontal: S(12), borderRadius: S(10),
+              backgroundColor: isCompleted ? 'rgba(0,107,88,0.06)' : 'rgba(107,107,107,0.06)',
+              borderWidth: 1.5,
+              borderColor: uploadedFileName ? '#006b58' : 'rgba(107,107,107,0.18)',
+              borderStyle: uploadedFileName ? 'solid' : 'dashed',
+              paddingVertical: S(10), paddingHorizontal: S(14),
+              flexDirection: 'row', alignItems: 'center', gap: S(12),
+            }}>
+              {isCompleted ? (
+                /* 완료 상태 */
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: S(10) }}>
+                  <Text style={{ fontSize: S(20) }}>✅</Text>
+                  <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#006b58', fontSize: S(11) }}>업로드 완료</Text>
+                </View>
+              ) : (
+                <>
+                  {/* + 버튼: 탭하면 mock 파일 선택 */}
+                  <TouchableOpacity
+                    onPress={handlePickFile}
+                    disabled={isAnalyzing}
+                    style={{
+                      width: S(38), height: S(38), borderRadius: S(19),
+                      backgroundColor: 'rgba(215,230,241,0.85)',
+                      alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>
+                    <Text style={{ color: '#5f9ecb', fontSize: S(22), fontWeight: 'bold', lineHeight: S(30) }}>+</Text>
+                  </TouchableOpacity>
+
+                  {/* 파일명 or 힌트 텍스트 */}
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    {uploadedFileName ? (
+                      <>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: S(4), marginBottom: S(2) }}>
+                          <Text style={{ fontSize: S(11) }}>📎</Text>
+                          <Text
+                            numberOfLines={1}
+                            style={{ fontFamily: 'Paperlogy-Medium', color: '#006b58', fontSize: S(10), flex: 1 }}>
+                            {uploadedFileName}
+                          </Text>
+                        </View>
+                        <Text style={{ fontFamily: 'Paperlogy-Regular', color: '#8a8a8a', fontSize: S(10) }}>
+                          + 버튼으로 다시 선택
+                        </Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={{ fontFamily: 'Paperlogy-SemiBold', color: '#555', fontSize: S(10), marginBottom: S(2) }}>
+                          파일 첨부
+                        </Text>
+                        <Text style={{ fontFamily: 'Paperlogy-Regular', color: '#aaa', fontSize: S(10) }}>
+                          + 버튼을 눌러 파일을 선택하세요
+                        </Text>
+                      </>
+                    )}
+                  </View>
+                </>
+              )}
             </View>
           )}
 
-          {/* 블록체인 해시 */}
-          <View className="bg-gray-900 rounded-2xl p-4">
-            <View className="flex-row items-center gap-2 mb-2">
-              <Text className="text-sm">⛓️</Text>
-              <Text className="text-xs font-bold text-green-400">TX Hash</Text>
-              <View className="ml-auto bg-green-900/50 rounded-full px-2 py-0.5">
-                <Text className="text-xs text-green-400 font-semibold">VERIFIED</Text>
-              </View>
-            </View>
-            <Text className="text-gray-400 text-xs font-mono leading-relaxed" numberOfLines={2}>
-              {txHash}
-            </Text>
-          </View>
-        </View>
-      ) : (
-        /* 분석 진행 중 */
-        <View className="p-5">
-          <View className="flex-row items-center gap-2 mb-4">
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-              <View className="w-9 h-9 bg-blue-50 rounded-xl items-center justify-center">
-                <Text className="text-lg">🤖</Text>
-              </View>
-            </Animated.View>
-            <View>
-              <Text className="text-base font-bold text-gray-800">AI 분석 중...</Text>
-              <Text className="text-xs text-gray-400">{currentStep} / {totalSteps} 단계 완료</Text>
-            </View>
-            <ActivityIndicator size="small" color="#3B82F6" style={{ marginLeft: 'auto' }} />
-          </View>
-
-          {/* 프로그레스 바 */}
-          <View className="h-2.5 bg-gray-100 rounded-full overflow-hidden mb-4">
-            <Animated.View
-              className="h-full bg-blue-400 rounded-full"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
-          </View>
-
-          {/* 단계별 체크리스트 */}
-          {AI_STEPS.map((step, idx) => {
-            const isDone    = idx < currentStep;
-            const isRunning = idx === currentStep;
-            return (
-              <View
-                key={idx}
-                className={`flex-row items-center gap-3 py-2.5 px-3 rounded-xl mb-1.5 ${
-                  isDone    ? 'bg-green-50' :
-                  isRunning ? 'bg-blue-50'  : 'bg-gray-50'
-                }`}
-              >
-                <View className={`w-6 h-6 rounded-full items-center justify-center ${
-                  isDone    ? 'bg-green-500' :
-                  isRunning ? 'bg-blue-500'  : 'bg-gray-200'
-                }`}>
-                  {isDone    ? <Text className="text-white text-xs font-bold">✓</Text> :
-                   isRunning ? <ActivityIndicator size="small" color="white" /> :
-                               <Text className="text-gray-400 text-xs">{idx + 1}</Text>}
-                </View>
-                <Text className="text-sm">{step.emoji}</Text>
-                <Text className={`text-sm font-medium flex-1 ${
-                  isDone    ? 'text-green-700' :
-                  isRunning ? 'text-blue-700'  : 'text-gray-400'
-                }`}>
-                  {step.label}
-                </Text>
-                {isDone && <Text className="text-xs text-green-500">완료</Text>}
-                {isRunning && <Text className="text-xs text-blue-500">진행 중</Text>}
-              </View>
-            );
-          })}
-        </View>
-      )}
-    </View>
-  );
-}
-
-// ── 메인 컴포넌트 ─────────────────────────────────────────────────
-// MissionStack에서 전달되는 route props 타입 지정
-type UploadScreenProps = NativeStackScreenProps<MissionStackParamList, 'MissionUpload'>;
-
-export default function MissionUploadScreen({ route }: UploadScreenProps) {
-  const missionId = (route?.params?.missionId ?? 'A_1') as MissionFeatureId;
-  const definition = MISSION_DEFINITIONS[missionId];
-
-  const [selectedFileType, setSelectedFileType] = useState<number | null>(null);
-  const [uploadedFileName, setUploadedFileName]  = useState<string | null>(null);
-  const [isUploading, setIsUploading]            = useState(false);
-  const [isAnalyzing, setIsAnalyzing]            = useState(false);
-  const [currentStep, setCurrentStep]            = useState(0);
-  const [aiScore, setAiScore]                    = useState<number | null>(null);
-  const [txHash, setTxHash]                      = useState<string | null>(null);
-
-  const completeMission = useMissionStore(s => s.completeMission);
-  // 완료 후 미션 센터로 돌아가기 위한 네비게이션
-  const navigation = useNavigation();
-
-  // 파일 업로드 시뮬레이션
-  const handleUpload = useCallback(() => {
-    if (selectedFileType === null) return;
-    setIsUploading(true);
-    setTimeout(() => {
-      const names = ['mission_proof.pdf', 'receipt_20260414.jpg', 'work_portfolio.png', 'certificate.pdf'];
-      setUploadedFileName(names[selectedFileType]);
-      setIsUploading(false);
-    }, 1200);
-  }, [selectedFileType]);
-
-  // AI 분석 파이프라인
-  const handleAnalyze = useCallback(async () => {
-    if (!uploadedFileName) {
-      showAlert('파일 필요', '먼저 파일을 업로드해주세요.');
-      return;
-    }
-    setIsAnalyzing(true);
-    setCurrentStep(0);
-
-    // 단계별 딜레이 시뮬레이션
-    let step = 0;
-    for (const s of AI_STEPS) {
-      await new Promise(r => setTimeout(r, s.duration));
-      step++;
-      setCurrentStep(step);
-    }
-
-    // 미션 완료 처리
-    try {
-      const result = await completeMission(
-        MOCK_USER_ID,
-        missionId,
-        JSON.stringify({ file: uploadedFileName, ts: Date.now() }),
-        Math.random() * 20 + 78,
-      );
-      setAiScore(82 + Math.random() * 15);
-      setTxHash(result.txHash);
-    } catch {
-      showAlert('오류', '분석 처리 중 오류가 발생했습니다.');
-      setIsAnalyzing(false);
-    }
-  }, [uploadedFileName, missionId, completeMission]);
-
-  const catId = missionId[0] as 'A' | 'B' | 'C' | 'D';
-  const catColors: Record<string, string> = {
-    A: 'bg-amber-500', B: 'bg-blue-500', C: 'bg-slate-500', D: 'bg-green-500',
-  };
-
-  return (
-    <SafeAreaView className="flex-1 bg-hana-lightgray" edges={['bottom']}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
-      >
-        {/* ── 미션 정보 헤더 ── */}
-        <View className={`mx-4 mt-4 rounded-3xl overflow-hidden ${catColors[catId] ?? 'bg-green-500'}`}>
-          <View className="p-5">
-            <View className="flex-row items-center gap-3 mb-3">
-              <View className="w-14 h-14 bg-white/20 rounded-2xl items-center justify-center">
-                <Text className="text-3xl">{MISSION_EMOJI[missionId] ?? '⚡'}</Text>
-              </View>
-              <View className="flex-1">
-                <Text className="text-white/70 text-xs font-medium">미션 인증</Text>
-                <Text className="text-white text-lg font-black leading-tight">
-                  {definition?.name ?? missionId}
-                </Text>
-              </View>
-              <View className="items-center bg-white/20 rounded-2xl p-2.5">
-                <Text className="text-white text-xl font-black">+50</Text>
-                <Text className="text-white/80 text-xs">🪙 코인</Text>
-              </View>
-            </View>
-            <Text className="text-white/80 text-sm leading-relaxed">
-              {definition?.description ?? '미션을 완료하고 작업물을 업로드하세요.'}
-            </Text>
-          </View>
-
-          {/* 인증 방식 칩 */}
-          <View className="flex-row gap-2 px-5 pb-4">
-            {['파일 업로드', 'AI 분석', '블록체인 기록'].map((tag, i) => (
-              <View key={i} className="bg-white/20 rounded-full px-3 py-1">
-                <Text className="text-white text-xs font-semibold">{tag}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* ── 업로드 카드 ── */}
-        <FileUploadCard
-          selectedFileType={selectedFileType}
-          onSelectFileType={setSelectedFileType}
-          onUpload={handleUpload}
-          isUploading={isUploading}
-          uploadedFileName={uploadedFileName}
-        />
-
-        {/* ── AI 분석 카드 ── */}
-        <AIAnalysisCard
-          isActive={isAnalyzing}
-          currentStep={currentStep}
-          totalSteps={AI_STEPS.length}
-          aiScore={aiScore}
-          txHash={txHash}
-        />
-
-        {/* ── 제출 버튼 ── */}
-        {!isAnalyzing && !txHash && (
-          <TouchableOpacity
-            onPress={handleAnalyze}
-            disabled={!uploadedFileName}
-            className={`mx-4 mt-5 py-4 rounded-2xl items-center ${
-              uploadedFileName ? 'bg-green-500' : 'bg-gray-200'
-            }`}
-            activeOpacity={0.85}
-          >
-            <Text className={`font-bold text-base ${uploadedFileName ? 'text-white' : 'text-gray-400'}`}>
-              🤖 AI 분석 시작 & 미션 인증
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {txHash && (
-          <View className="mx-4 mt-4 gap-3">
-            <View className="bg-green-500 rounded-2xl py-4 items-center">
-              <Text className="text-white font-bold text-base">✅ 인증 완료 · 갓생점수 반영됨</Text>
-            </View>
-            {/* 완료 후 미션 센터로 돌아가기 */}
+          {/* 업로드 버튼 — 항상 활성, 누르면 즉시 분석 시작 */}
+          {!isCompleted && (
             <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              className="bg-white border border-gray-200 rounded-2xl py-3.5 items-center"
-              activeOpacity={0.8}
-            >
-              <Text className="text-gray-700 font-semibold text-sm">← 미션 센터로 돌아가기</Text>
+              onPress={handleUpload}
+              style={{
+                marginHorizontal: S(12), marginTop: S(14), height: S(44),
+                borderRadius: S(12),
+                backgroundColor: isAnalyzing ? 'rgba(0,107,88,0.45)' : '#006b58',
+                alignItems: 'center', justifyContent: 'center',
+                flexDirection: 'row', gap: S(8),
+              }}>
+              {isAnalyzing && <ActivityIndicator size="small" color="white" />}
+              <Text style={{ fontFamily: 'Paperlogy-SemiBold', color: 'white', fontSize: S(15) }}>
+                {isAnalyzing ? '분석 중...' : '업로드'}
+              </Text>
             </TouchableOpacity>
+          )}
+        </View>
+
+        {/* ── AI 분석 섹션 ─────────────────────────────── */}
+        <View style={{
+          marginHorizontal: S(18), marginTop: S(14), backgroundColor: 'white',
+          borderRadius: S(15), paddingTop: S(12), paddingBottom: S(16), paddingHorizontal: S(9),
+        }}>
+          <View style={{ marginLeft: S(12), marginBottom: S(8) }}>
+            <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#1b1b1b', fontSize: S(15) }}>🖥️ AI 분석</Text>
+            <Text style={{ fontFamily: 'Paperlogy-Regular', color: '#8a8a8a', fontSize: S(9), marginTop: S(3), marginLeft: S(16) }}>
+              AI가 업로드한 파일의 진위를 분석합니다.
+            </Text>
           </View>
+          <View style={{ height: 1, backgroundColor: 'rgba(0,0,0,0.08)', marginHorizontal: S(8), marginBottom: S(16) }} />
+
+          {/* 단계 목록 */}
+          <View style={{ gap: S(10), paddingHorizontal: S(12) }}>
+            {AI_STEPS.map((step) => {
+              const isDone   = completedSteps >= step.id;
+              const isActive = isAnalyzing && step.id === completedSteps + 1;
+
+              const bgColor = isDone
+                ? stepAnims[step.id - 1].interpolate({ inputRange: [0, 1], outputRange: ['rgba(133,133,133,0.2)', '#e0f2ee'] })
+                : isActive ? 'rgba(0,107,88,0.07)' : 'rgba(133,133,133,0.2)';
+
+              return (
+                <Animated.View key={step.id} style={{
+                  height: S(42), borderRadius: S(10),
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingHorizontal: S(14), backgroundColor: bgColor,
+                }}>
+                  {isDone ? (
+                    <View style={{
+                      width: S(20), height: S(20), borderRadius: S(10),
+                      backgroundColor: '#006b58', alignItems: 'center', justifyContent: 'center', marginRight: S(10),
+                    }}>
+                      <Text style={{ color: 'white', fontSize: S(12), fontWeight: 'bold' }}>✓</Text>
+                    </View>
+                  ) : isActive ? (
+                    <ActivityIndicator size="small" color="#006b58"
+                      style={{ width: S(20), height: S(20), marginRight: S(10) }} />
+                  ) : (
+                    <View style={{
+                      width: S(20), height: S(20), borderRadius: S(10),
+                      backgroundColor: 'rgba(133,133,133,0.35)', marginRight: S(10),
+                    }} />
+                  )}
+                  <Text style={{
+                    fontFamily: 'Paperlogy-Medium', fontSize: S(13),
+                    color: isDone ? '#006b58' : isActive ? '#004d3f' : '#383835',
+                  }}>
+                    {step.label}
+                  </Text>
+                </Animated.View>
+              );
+            })}
+          </View>
+
+          {/* 완료 후 tx 해시 */}
+          {txHash ? (
+            <View style={{
+              marginHorizontal: S(12), marginTop: S(16),
+              backgroundColor: 'rgba(0,107,88,0.06)', borderRadius: S(10),
+              paddingHorizontal: S(12), paddingVertical: S(8),
+            }}>
+              <Text style={{ fontFamily: 'Paperlogy-Medium', color: '#006b58', fontSize: S(11) }}>✅ 블록체인 등록 완료</Text>
+              <Text style={{ fontFamily: 'Paperlogy-Regular', color: '#8a8a8a', fontSize: S(10), marginTop: S(4) }} numberOfLines={1}>
+                {txHash}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* ── 완료 버튼 ─────────────────────────────────── */}
+        {isCompleted && (
+          <TouchableOpacity onPress={handleDone} style={{
+            marginHorizontal: S(18), marginTop: S(20),
+            backgroundColor: '#006b58', borderRadius: S(15),
+            height: S(50), alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Text style={{ fontFamily: 'Paperlogy-SemiBold', color: 'white', fontSize: S(16) }}>완료</Text>
+          </TouchableOpacity>
         )}
       </ScrollView>
     </SafeAreaView>
