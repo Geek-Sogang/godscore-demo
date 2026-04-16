@@ -70,11 +70,12 @@ function TabIcon({ icon, label, focused }: { icon: { uri: string }; label: strin
         }}
         resizeMode="contain"
       />
-      <Text style={{
+      <Text numberOfLines={1} style={{
         fontSize: 10,
         fontWeight: focused ? '700' : '400',
         color: focused ? '#006b58' : '#9CA3AF',
         marginTop: 2,
+        textAlign: 'center',
       }}>
         {label}
       </Text>
@@ -121,9 +122,9 @@ export default function AppNavigator() {
           backgroundColor: 'rgba(252,249,244,0.97)',
           borderTopColor:  'transparent',
           borderTopWidth:  0,
-          height:          72,
-          paddingBottom:   8,
-          paddingTop:      8,
+          height:          62,
+          paddingBottom:   4,
+          paddingTop:      6,
           shadowColor:     '#1c1c19',
           shadowOffset:    { width: 0, height: -4 },
           shadowOpacity:   0.04,

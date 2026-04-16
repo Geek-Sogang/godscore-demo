@@ -278,38 +278,78 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
 
         // quarterly_base_score 는 백엔드 스키마에 없음 → 보내지 않음
         // 서버가 Supabase에서 직접 cumulative_score 조회
-        const response = await api.post<GodScoreApiResponse>(
-          '/api/v1/godscore/calculate',
-          { features: featInput },
+        const { categoryWeights, featureWeights } = get();
+        // ── 피처 벡터 읽기 (키 이름은 types/featureKeys.ts FeatureVector 와 100% 일치)
+        const fA = featInput.A1_wake_score        * featureWeights.wA1
+                 + featInput.A2_sleep_score        * featureWeights.wA2
+                 + featInput.A3_checkin_score       * featureWeights.wA3  // A3_streak_score → A3_checkin_score
+                 + featInput.A4_mission_rate        * featureWeights.wA4; // A4_mission_score → A4_mission_rate
+        const fB = featInput.B1_portfolio_score      * featureWeights.wB1
+                 + featInput.B2_income_stability      * featureWeights.wB2 // B2_income_var_score → B2_income_stability
+                 + featInput.B3_income_predictability * featureWeights.wB3 // B3_income_stab_score → B3_income_predictability
+                 + featInput.B4_work_completion       * featureWeights.wB4; // B4_work_cert_score → B4_work_completion
+        const fC = featInput.C1_spending_regularity * featureWeights.wC1  // C1_spend_pattern_score → C1_spending_regularity
+                 + featInput.C2_impulse_control      * featureWeights.wC2  // C2_impulse_score → C2_impulse_control
+                 + featInput.C3_grocery_score        * featureWeights.wC3
+                 + featInput.C4_balance_maintain     * featureWeights.wC4; // C4_balance_score → C4_balance_maintain
+        const fD = featInput.D1_health_score    * featureWeights.wD1  // D1_exercise_score → D1_health_score
+                 + featInput.D2_eco_score        * featureWeights.wD2
+                 + featInput.D3_energy_score     * featureWeights.wD3
+                 + featInput.D4_volunteer_score  * featureWeights.wD4;
+
+        const totalScore = Math.round(
+          categoryWeights.wA * fA * 1000
+        + categoryWeights.wB * fB * 1000
+        + categoryWeights.wC * fC * 1000
+        + categoryWeights.wD * fD * 1000
         );
 
-        const snapshot = mapCalculateToSnapshot(
+        const today = new Date().toISOString().slice(0, 10);
+        const breakdown: GodScoreBreakdown = {
+          fA: parseFloat((fA * 100).toFixed(1)),
+          fB: parseFloat((fB * 100).toFixed(1)),
+          fC: parseFloat((fC * 100).toFixed(1)),
+          fD: parseFloat((fD * 100).toFixed(1)),
+          totalScore,
+        };
+        // SHAP Mock: 각 피처 기여도를 점수 비례로 계산
+        const shapValues: SHAPValue[] = FEATURE_KEYS.map(k => ({
+          featureId:     k,
+          featureName:   FEATURE_LABEL[k],
+          shapValue:     parseFloat(((featInput[k as keyof FeatureVector] as number ?? 0) * 10).toFixed(2)),
+          baselineScore: 0,
+        }));
+
+        const snapshot: GodScoreSnapshot = {
+          id:                  `${userId}_${today}`,
           userId,
-          response,
-          get().categoryWeights,
-          get().featureWeights,
-        );
+          date:                today,
+          breakdown,
+          weights:             categoryWeights,
+          featureWeights,
+          shapValues,
+          tier:                getTierByScore(totalScore),
+          quarterlyWeight:     0.70,
+          accumulativeWeight:  0.30,
+          movingAvg90dScore:   totalScore,
+          estimatedRateDiscount: Math.min(totalScore / 1000, 1.0),
+          createdAt:           new Date().toISOString(),
+        };
 
         set(state => {
           state.currentSnapshot = snapshot;
-
-          // 90일 이력 유지
-          const today = response.score_date;
-          const idx   = state.history.findIndex(h => h.date === today);
-          if (idx >= 0) {
-            state.history[idx] = snapshot;
-          } else {
+          const idx = state.history.findIndex(h => h.date === today);
+          if (idx >= 0) { state.history[idx] = snapshot; }
+          else {
             state.history.push(snapshot);
-            if (state.history.length > 90) {
-              state.history.splice(0, state.history.length - 90);
-            }
+            if (state.history.length > 90) state.history.splice(0, state.history.length - 90);
           }
           state.isCalculating = false;
         });
 
       } catch (err) {
         set(state => {
-          state.error         = err instanceof Error ? err.message : '점수 계산 서버 오류';
+          state.error         = err instanceof Error ? err.message : '점수 계산 오류';
           state.isCalculating = false;
         });
       }

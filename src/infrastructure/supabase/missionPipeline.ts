@@ -107,11 +107,80 @@ export async function runMissionPipeline(
     (_cachedPointBalance.get(input.userId) ?? 0) + input.pointsEarned,
   );
 
-  console.log(
-    `[Pipeline ✅] ${input.missionId} 완료`,
-    `score=${normalizedScore}`,
-    `txHash=${txHash.slice(0, 12)}...`,
-  );
+  // Step 7. 스트릭 캐시 갱신 — 오늘 처음 미션 완료 시 streak +1
+  const today     = new Date().toISOString().slice(0, 10);
+  const prevStreak = _cachedStreak.get(input.userId);
+  if (prevStreak) {
+    // 어제 체크인이 있었으면 streak 연장, 아니면 1로 리셋
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const isConsecutive = prevStreak.lastCheckInDate === yesterday || prevStreak.lastCheckInDate === today;
+    const newStreak = isConsecutive
+      ? (prevStreak.lastCheckInDate === today ? prevStreak.currentStreak : prevStreak.currentStreak + 1)
+      : 1;
+    const BONUS_MILESTONES = [7, 30, 100];
+    _cachedStreak.set(input.userId, {
+      ...prevStreak,
+      currentStreak:    newStreak,
+      longestStreak:    Math.max(prevStreak.longestStreak, newStreak),
+      lastCheckInDate:  today,
+      daysToNextBonus:  Math.min(...BONUS_MILESTONES.filter(m => m > newStreak).concat([Infinity])) - newStreak,
+    });
+  } else {
+    // 최초 미션 완료 — 스트릭 초기화
+    _cachedStreak.set(input.userId, {
+      userId:           input.userId,
+      currentStreak:    1,
+      longestStreak:    1,
+      lastCheckInDate:  today,
+      bonusMilestones:  [7, 30, 100],
+      daysToNextBonus:  6,
+    });
+  }
+
+  // ── 개발자 도구 콘솔에 상세 DB 저장 결과 출력 ─────────
+  if (typeof window !== 'undefined') {
+    console.group(`%c[🗄️ Mock DB] ${meta.name} (${input.missionId}) 저장 완료`, 'color:#006b58;font-weight:bold');
+    console.log('%cmission_logs INSERT', 'color:#5f9ecb;font-weight:bold', {
+      id:                  missionLog.id,
+      userId:              missionLog.userId,
+      missionId:           missionLog.missionId,
+      status:              missionLog.status,
+      pointsEarned:        missionLog.pointsEarned,
+      normalizedScore:     normalizedScore,
+      aiVerificationScore: missionLog.aiVerificationScore,
+      completedAt:         missionLog.completedAt,
+    });
+    console.log('%cblockchain_records INSERT', 'color:#9b59b6;font-weight:bold', {
+      txHash:              txHash,
+      clientSHA256:        clientHash.slice(0, 20) + '...',
+      blockchainRecorded:  true,
+      onchainVerified:     true,
+    });
+    console.log('%cpoint_ledger INSERT', 'color:#f39c12;font-weight:bold', {
+      userId:              input.userId,
+      delta:               `+${input.pointsEarned}pt`,
+      newBalance:          _cachedPointBalance.get(input.userId),
+    });
+    const streak = _cachedStreak.get(input.userId);
+    if (streak) {
+      console.log('%cuser_streaks UPDATE', 'color:#e74c3c;font-weight:bold', {
+        currentStreak:   streak.currentStreak,
+        longestStreak:   streak.longestStreak,
+        lastCheckInDate: streak.lastCheckInDate,
+        daysToNextBonus: streak.daysToNextBonus,
+      });
+    }
+    console.log('%c📋 전체 저장 현황 보기 → 콘솔에 __missionDB 입력', 'color:#888;font-style:italic');
+    console.groupEnd();
+
+    // window.__missionDB: 콘솔에서 직접 조회 가능한 글로벌 디버그 객체
+    (window as unknown as Record<string, unknown>).__missionDB = {
+      mission_logs:   Object.fromEntries(_cachedMissionLogs),
+      point_balance:  Object.fromEntries(_cachedPointBalance),
+      user_streaks:   Object.fromEntries(_cachedStreak),
+      /** 사용법: __missionDB.mission_logs, __missionDB.point_balance 등 */
+    };
+  }
 
   return { missionLog, txHash, verified: true };
 }

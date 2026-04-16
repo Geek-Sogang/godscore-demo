@@ -28,7 +28,7 @@ import { useMissionStore } from '../../application/stores/missionStore';
 
 // ── 화면 크기 기반 스케일링 ────────────────────────────────────
 const { width: SCREEN_W } = Dimensions.get('window');
-const S = (n: number): number => Math.round((SCREEN_W / 390) * n);
+const S = (n: number): number => Math.round((Math.min(SCREEN_W, 480) / 390) * n);
 
 // ── Figma 이미지 에셋 ─────────────────────────────────────────────
 const IMG = {
@@ -72,7 +72,8 @@ const ITEMS: StoreItem[] = [
   { id: 'sidetable', name: '미니 협탁',      price: 60,  image: IMG.item6, category: 'furniture' },
 ];
 
-const ITEM_CARD_W = (SCREEN_W - S(13) * 2 - S(12)) / 2; // 좌우 여백 S(13), 간격 S(12)
+const CAPPED_W    = Math.min(SCREEN_W, 480);
+const ITEM_CARD_W = (CAPPED_W - S(13) * 2 - S(12)) / 2; // 좌우 여백 S(13), 간격 S(12)
 
 export default function ItemStoreScreen(): React.JSX.Element {
   // ── missionStore에서 코인 잔고 읽기 ──────────────────────────
@@ -221,7 +222,7 @@ export default function ItemStoreScreen(): React.JSX.Element {
 
         {/* ── 아이템 그리드 (2열) ──────────────────────────── */}
         {visibleItems.length > 0 ? (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S(12), marginHorizontal: S(13) }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S(12), marginHorizontal: S(13), maxWidth: CAPPED_W, alignSelf: 'center' }}>
             {visibleItems.map((item) => {
               const owned = purchasedItems.has(item.id);
               return (

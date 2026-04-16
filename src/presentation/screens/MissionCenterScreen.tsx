@@ -32,7 +32,7 @@ import type { MissionStackParamList } from '../navigation/AppNavigator';
 // ── 화면 크기 기반 스케일링 ─────────────────────────────────────
 const { width: SCREEN_W } = Dimensions.get('window');
 const BASE_W = 390; // Figma 기준 너비
-const S = (n: number): number => Math.round((SCREEN_W / BASE_W) * n);
+const S = (n: number): number => Math.round((Math.min(SCREEN_W, 480) / BASE_W) * n);
 
 type MissionNavProp = NativeStackNavigationProp<MissionStackParamList, 'MissionCenterMain'>;
 
@@ -488,15 +488,28 @@ export default function MissionCenterScreen(): React.JSX.Element {
                   </Text>
                 </View>
 
-                {/* 미션 인증 버튼 */}
+                {/* 미션 인증 버튼 + 파일첨부 태그 */}
+                <View style={{ alignItems: 'center', marginRight: S(10), gap: S(4) }}>
+                  {/* 파일업로드 미션에만 📎 파일첨부 태그 표시 */}
+                  {FILE_UPLOAD_MISSIONS.has(m.id) && !done && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center',
+                      backgroundColor: 'rgba(95,158,203,0.15)',
+                      borderRadius: S(6), paddingHorizontal: S(5), paddingVertical: S(2),
+                    }}>
+                      <Text style={{ fontSize: S(9), color: '#5f9ecb' }}>📎 </Text>
+                      <Text style={{ fontFamily: 'Paperlogy-Medium', fontSize: S(9), color: '#5f9ecb' }}>
+                        파일첨부
+                      </Text>
+                    </View>
+                  )}
                 <TouchableOpacity
                   onPress={() => handleMission(m.id)}
                   disabled={done}
                   style={{
-                    width: S(75), height: S(67),
+                    width: S(75), height: S(57),
                     backgroundColor: done ? 'rgba(150,196,180,0.5)' : 'rgba(254,231,75,0.31)',
                     borderRadius: S(10),
-                    marginRight: S(10),
                     alignItems: 'center', justifyContent: 'center',
                     shadowColor: '#000', shadowOffset: { width: 1, height: 1 },
                     shadowOpacity: 0.1, shadowRadius: 4,
@@ -519,6 +532,7 @@ export default function MissionCenterScreen(): React.JSX.Element {
                     </View>
                   )}
                 </TouchableOpacity>
+                </View>{/* 버튼+태그 wrapper 닫힘 */}
               </View>
             );
           })}

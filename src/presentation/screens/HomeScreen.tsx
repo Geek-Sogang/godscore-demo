@@ -23,7 +23,7 @@ import { useMissionStore } from '../../application/stores/missionStore';
 
 // ── 화면 크기 기반 스케일링 ────────────────────────────────────
 const { width: SCREEN_W } = Dimensions.get('window');
-const S = (n: number): number => Math.round((SCREEN_W / 390) * n);
+const S = (n: number): number => Math.round((Math.min(SCREEN_W, 480) / 390) * n);
 
 // ── Figma 에셋 (node 1:498, 최신 URL) ─────────────────────────
 const IMG = {
@@ -64,10 +64,12 @@ export default function HomeScreen(): React.JSX.Element {
   const { currentSnapshot }                    = useGodScoreStore();
   const { dailyStatus, pointBalance, streak }  = useMissionStore();
 
-  const score       = currentSnapshot?.breakdown.totalScore ?? 437;
+  // NaN 가드: score/coins/streak 가 NaN이면 기본값으로 대체
+  const rawScore    = currentSnapshot?.breakdown.totalScore ?? 437;
+  const score       = Number.isFinite(rawScore) ? rawScore : 437;
   // 코인 잔고는 missionStore의 pointBalance (DB 연동) 에서 직접 읽음
-  const coins       = pointBalance;
-  const streakCount = streak?.currentStreak ?? 64;
+  const coins       = Number.isFinite(pointBalance) ? pointBalance : 0;
+  const streakCount = Number.isFinite(streak?.currentStreak ?? 64) ? (streak?.currentStreak ?? 64) : 64;
   const completedToday = dailyStatus?.completedCount ?? 0;
   const totalToday     = dailyStatus?.totalCount ?? 16;
 
@@ -91,6 +93,12 @@ export default function HomeScreen(): React.JSX.Element {
     if (tabNav) {
       tabNav.navigate('Mission');
     }
+  }, [navigation]);
+
+  // SHOP 버튼 → 아이템 스토어 탭으로 이동
+  const goStore = useCallback(() => {
+    const tabNav = navigation.getParent<TabNav>();
+    if (tabNav) { tabNav.navigate('ItemStore'); }
   }, [navigation]);
 
   return (
@@ -214,7 +222,7 @@ export default function HomeScreen(): React.JSX.Element {
             <Image source={IMG.room} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
 
             {/* SHOP 버튼 — flexbox column: SHOP텍스트 위 + 카트아이콘 아래 */}
-            <TouchableOpacity onPress={goMission} style={{
+            <TouchableOpacity onPress={goStore} style={{
               position: 'absolute', right: S(8), top: S(8),
               width: S(58), height: S(59),
               backgroundColor: 'rgba(0,107,88,0.13)', borderRadius: S(7),

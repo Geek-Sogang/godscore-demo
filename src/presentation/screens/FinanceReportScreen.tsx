@@ -21,7 +21,7 @@ import { useGodScoreStore } from '../../application/stores/godScoreStore';
 import { useMissionStore } from '../../application/stores/missionStore';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const S = (n: number): number => Math.round((SCREEN_W / 390) * n);
+const S = (n: number): number => Math.round((Math.min(SCREEN_W, 480) / 390) * n);
 
 // ── 에셋 ─────────────────────────────────────────────────────
 const IMG = {
@@ -44,6 +44,8 @@ const TL_MIN = 400;
 const TL_MAX = 450;
 const CHART_H = S(120); // 차트 영역 높이 (점 위치 계산용)
 const DOT_R   = S(6);   // 점 반지름
+// 차트 실제 너비: 캡된 SCREEN_W 기준 (패딩 제외)
+const CHART_W = Math.min(SCREEN_W, 480) - S(13) * 2 - S(40);
 
 function normalizeScore(s: number): number {
   return Math.max(0, Math.min(1, (s - TL_MIN) / (TL_MAX - TL_MIN)));
@@ -200,14 +202,14 @@ export default function FinanceReportScreen(): React.JSX.Element {
                 // y: 위→아래 (0=top, 1=bottom), 높이가 높을수록 y 작음
                 const yRatio = 1 - normalizeScore(pt.score);
 
-                const xPx = xRatio * (SCREEN_W - S(13) * 2 - S(40)); // 차트 실제 너비 근사
+                const xPx = xRatio * CHART_W; // 캡된 너비 기준
                 const yPx = yRatio * CHART_H;
 
                 // 이전 점과의 연결선
                 let lineEl: React.ReactElement | null = null;
                 if (i > 0) {
                   const prev = TIMELINE_DATA[i - 1];
-                  const prevX = ((i - 1) * 2 + 1) / (n * 2) * (SCREEN_W - S(13) * 2 - S(40));
+                  const prevX = ((i - 1) * 2 + 1) / (n * 2) * CHART_W;
                   const prevY = (1 - normalizeScore(prev.score)) * CHART_H;
                   const dx = xPx - prevX;
                   const dy = yPx - prevY;
