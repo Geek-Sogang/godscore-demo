@@ -95,6 +95,7 @@ export function executeCalculateGodScore(
     quarterlyWeight: QUARTERLY_WEIGHT,
     accumulativeWeight: ACCUMULATIVE_WEIGHT,
     movingAvg90dScore: finalScore,
+    estimatedRateDiscount: 0,  // 도메인 레이어는 서버 값 미보유 → 인프라 레이어(godScoreStore)에서 덮어씀
     createdAt: new Date().toISOString(),
   };
 

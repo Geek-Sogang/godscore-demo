@@ -72,6 +72,9 @@ export interface GodScoreSnapshot {
   accumulativeWeight: number;
   /** 최근 90일 이동평균 기반 점수 */
   movingAvg90dScore: number;
+  /** 서버 산출 금리 인하 비율 (0.0~1.0) — 백엔드 estimated_rate_discount
+   * loadLatestScore 시에는 score 기반 파생값, calculateScore 시에는 서버 제공값 */
+  estimatedRateDiscount: number;
   createdAt: string;
 }
 
