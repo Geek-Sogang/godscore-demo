@@ -1,6 +1,11 @@
 """
 app/core/config.py
 환경변수를 로드하고 앱 전역 설정을 관리하는 모듈.
+
+[Supabase Hosted 방식]
+  JWT_SECRET / JWT_ALGORITHM / ACCESS_TOKEN_EXPIRE_MINUTES 제거.
+  Supabase Hosted는 JWT 서명을 내부적으로 관리하므로 백엔드에서 불필요.
+  토큰 검증은 supabase.auth.get_user()가 전담.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
@@ -12,15 +17,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 
-    # Supabase 연결 정보
+    # Supabase 연결 정보 (Supabase 대시보드 > Settings > API)
     SUPABASE_URL: str = "https://your-project.supabase.co"
     SUPABASE_ANON_KEY: str = "your-anon-key"
     SUPABASE_SERVICE_ROLE_KEY: str = "your-service-role-key"
-
-    # JWT 인증 설정
-    JWT_SECRET: str = "your-supabase-jwt-secret"
-    JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
     # CORS 허용 출처 (콤마 구분)
     CORS_ORIGINS: str = "http://localhost:8081,http://localhost:19006,http://127.0.0.1:8081"

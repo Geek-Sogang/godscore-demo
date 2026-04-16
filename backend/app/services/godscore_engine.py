@@ -25,7 +25,8 @@ from pathlib import Path
 from datetime import date
 
 import xgboost as xgb
-import shap
+# shap은 사용 시점에 lazy import — 서버 시작 시 NumPy 2.x TypeError 방지
+# (실제 사용: _get_shap_explainer() 내부에서 import)
 
 logger = logging.getLogger(__name__)
 

@@ -30,7 +30,6 @@ import type {
 import {
   INITIAL_CATEGORY_WEIGHTS,
   INITIAL_FEATURE_WEIGHTS,
-  GOD_SCORE_TIER_TABLE,
   getTierByScore,
 } from '../../../types/godScore';
 import type { FeatureVector } from '../../../types/featureKeys';
@@ -112,6 +111,18 @@ interface GodScoreActions {
 // ── 응답 변환 ─────────────────────────────────────────────
 
 /**
+ * 점수 기반 금리 인하율 파생 함수 (인프라 계층 전용)
+ * 용도: loadLatestScore 시 DB에 estimated_rate_discount 미저장 → 폴백으로만 사용
+ * calculateScore 응답에는 서버 값(estimated_rate_discount)을 그대로 사용할 것
+ */
+function deriveDiscountFromScore(score: number): number {
+  if (score >= 850) return 1.0;
+  if (score >= 600) return 0.75;
+  if (score >= 400) return 0.5;
+  return 0.25;
+}
+
+/**
  * 백엔드 calculate 응답 → GodScoreSnapshot 변환
  */
 function mapCalculateToSnapshot(
@@ -150,6 +161,7 @@ function mapCalculateToSnapshot(
     quarterlyWeight:     0.70,
     accumulativeWeight:  0.30,
     movingAvg90dScore:   Math.round(res.cumulative_score ?? 0),
+    estimatedRateDiscount: res.estimated_rate_discount ?? 0,  // 서버 제공 금리 인하율
     createdAt:           new Date().toISOString(),
   };
 }
@@ -202,6 +214,7 @@ function mapLatestToSnapshot(
     quarterlyWeight:     0.70,
     accumulativeWeight:  0.30,
     movingAvg90dScore:   Math.round(res.cumulative_score ?? totalScore),
+    estimatedRateDiscount: deriveDiscountFromScore(totalScore),  // DB에 미저장 → 점수 기반 파생
     createdAt:           new Date().toISOString(),
   };
 }
@@ -400,6 +413,7 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
           quarterlyWeight:      0.70,
           accumulativeWeight:   0.30,
           movingAvg90dScore:    totalScore - 10,
+          estimatedRateDiscount: deriveDiscountFromScore(totalScore),  // Mock 시딩용 파생값
           createdAt:            new Date(Date.now() - i * 86_400_000).toISOString(),
         };
         history.push(snapshot);
@@ -417,9 +431,10 @@ export const useGodScoreStore = create<GodScoreState & GodScoreActions>()(
 
 // ── Selectors ─────────────────────────────────────────────
 export const selectCurrentScore     = (s: GodScoreState) =>
-  s.currentSnapshot?.breakdown.totalScore ?? 0;
+  s.currentSnapshot?.breakdown.totalScore ?? 437;
+// 기본값: score 437(성실) 기준 — selectCurrentScore 기본값과 일치
 export const selectCurrentTier      = (s: GodScoreState) =>
-  s.currentSnapshot?.tier ?? GOD_SCORE_TIER_TABLE[0];
+  s.currentSnapshot?.tier ?? getTierByScore(437);
 export const selectBreakdown        = (s: GodScoreState) =>
   s.currentSnapshot?.breakdown ?? null;
 export const selectSHAPValues       = (s: GodScoreState) =>
@@ -432,3 +447,5 @@ export const selectIsCalculating    = (s: GodScoreState) =>
   s.isCalculating;
 export const selectError            = (s: GodScoreState) =>
   s.error;
+export const selectEstimatedDiscount = (s: GodScoreState) =>
+  s.currentSnapshot?.estimatedRateDiscount ?? 0;
