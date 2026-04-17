@@ -106,11 +106,6 @@ S = wA·fA + wB·fB + wC·fC + wD·fD
 
 **네비게이션**: Bottom Tab 5탭 — 홈🏠 / 미션⚡ / 스토어🛒 / 리포트📊 / 내정보👤
 
----
-**수정 완료된 Mermaid 다이어그램 코드입니다.**
-
-GitHub README.md에 **기존 코드 전체를 아래 코드로 교체**하여 붙여넣으시면 오류 없이 정상 렌더링됩니다.
-
 ```mermaid
 ---
 title: 하나 더 (Hana More) — 전체 시스템 아키텍처
