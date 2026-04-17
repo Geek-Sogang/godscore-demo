@@ -106,6 +106,7 @@ S = wA·fA + wB·fB + wC·fC + wD·fD
 
 **네비게이션**: Bottom Tab 5탭 — 홈🏠 / 미션⚡ / 스토어🛒 / 리포트📊 / 내정보👤
 
+
 ```mermaid
 ---
 title: 하나 더 (Hana More) — 전체 시스템 아키텍처
