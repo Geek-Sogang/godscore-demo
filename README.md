@@ -107,6 +107,82 @@ S = wA·fA + wB·fB + wC·fC + wD·fD
 **네비게이션**: Bottom Tab 5탭 — 홈🏠 / 미션⚡ / 스토어🛒 / 리포트📊 / 내정보👤
 
 ---
+**수정 완료된 Mermaid 다이어그램 코드입니다.**
+
+GitHub README.md에 **기존 코드 전체를 아래 코드로 교체**하여 붙여넣으시면 오류 없이 정상 렌더링됩니다.
+
+```mermaid
+---
+title: 하나 더 (Hana More) — 전체 시스템 아키텍처
+---
+flowchart LR
+    subtitle["수집 → 검증 → 추론 → 고도화<br>4단계 파이프라인"]
+
+    %% Stage 1: 수집
+    subgraph 수집 ["1. 수집 단계 (Data Collection)"]
+        direction TB
+        RN["React Native SDK<br>(모바일 앱)"] 
+        DS["OS 레벨 데이터 수집<br>• 기상: UsageStatsManager, Screen Time API<br>• 수면·운동: Samsung Health, Apple HealthKit<br>• 금융: 마이데이터 표준 API"]
+        HASH["Keccak256 해싱<br>즉시 서버 전송"]
+        RN --> DS
+        DS --> HASH
+    end
+
+    HASH --> SERVER["FastAPI 서버"]
+
+    %% Stage 2: 검증
+    subgraph 검증 ["2. 검증 단계 (Verification & Anti-Tamper)"]
+        direction TB
+        ANTI["Anti-Tamper 엔진<br>• GPS 위조 검증<br>• 당일 중복 요청<br>• AI 생성 인증샷 여부"]
+        PG["PostgreSQL<br>(데이터 저장)"]
+        KAF["Kafka<br>(비동기 큐)"]
+        BC["블록체인 온체인 기록<br>(Mock 파이프라인)"]
+        ANTI --> PG
+        ANTI --> KAF
+        KAF --> BC
+    end
+
+    SERVER --> ANTI
+
+    %% Stage 3: 추론
+    subgraph 추론 ["3. 추론 단계 (Inference & Closed-loop)"]
+        direction TB
+        GOD["GodScore Engine<br>XGBoost 실시간 인퍼런스"]
+        SHAP["SHAP Value 분석<br>(행동별 기여도 정량 설명)"]
+        CL["Closed-loop 피드백<br>미션 수행 → 데이터 정제 → 점수 재산출 → 사용자 즉각 피드백"]
+        GOD --> SHAP
+        SHAP --> CL
+    end
+
+    ANTI --> GOD
+
+    %% Stage 4: 고도화
+    subgraph 고도화 ["4. 고도화 단계 (Model Advancement)"]
+        direction TB
+        RETRAIN["분기별 재학습<br>XGBoost 모델"]
+        KFOLD["K-Fold 교차 검증<br>피처 통계적 유의성 재검토"]
+        LOAN["실제 대출 상환 이력 결합"]
+        UPDATE["가중치 자동 재조정<br>살아있는 신용 평가 엔진"]
+        RETRAIN --> KFOLD
+        KFOLD --> LOAN
+        LOAN --> UPDATE
+    end
+
+    GOD & PG --> RETRAIN
+
+    %% 최종 출력
+    CL --> SCORE["갓생점수<br>(God-Saeng Score)"]
+    SCORE --> ALT["하나 대안신용점수<br>(갓생점수 + 기존 CB 신용평가)"]
+    ALT -.-> BENEFIT["금리 우대 / 대안 심사"]
+
+    subtitle --> 수집
+
+    style subtitle fill:#0A2540, color:#fff, stroke:#fff, font-size:18px
+    style 수집 fill:#E3F2FD, stroke:#1976D2
+    style 검증 fill:#E8F5E9, stroke:#388E3C
+    style 추론 fill:#FFF3E0, stroke:#F57C00
+    style 고도화 fill:#F3E5F5, stroke:#7B1FA2
+---
 
 ## 🚀 실행 방법 (Getting Started)
 
